@@ -14,11 +14,18 @@ camino = { version = "1.1", features = ["serde1"] }
 cfg-if = "1"
 ctrlc = "3.4"
 devolutions-log = { path = "../crates/devolutions-log" }
+devolutions-gateway-task = { path = "../crates/devolutions-gateway-task" }
 parking_lot = "0.12"
 serde = "1"
 serde_json = "1"
 tap = "1.0"
 tracing = "0.1"
+now-proto-pdu = { version = "0.1", git = "https://github.com/Devolutions/IronRDP", rev = "7c268d863048d0a9182b3f7bf778668de8db4ccf" }
+ironrdp = { version = "0.5", git = "https://github.com/Devolutions/IronRDP", rev = "7c268d863048d0a9182b3f7bf778668de8db4ccf", features = ["core", "pdu"]}
+tokio = { version = "1", features = ["macros", "sync"] }
+async-trait = "0.1"
+futures = "0.3"
+
 
 [lints]
 workspace = true
@@ -35,4 +42,9 @@ features = [
     "Win32_System_IO",
     "Win32_System_Threading",
     "Win32_Security",
+    "Win32_System_Shutdown",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    # Required for Win32_System_Registry
+    "Win32_System_Registry",
 ]
