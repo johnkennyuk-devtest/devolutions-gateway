@@ -3,41 +3,6 @@ use std::path::PathBuf;
 
 use tinyjson::JsonValue;
 
-macro_rules! diagnostic {
-    ( $callback:ident, $name:ident ( $( $arg:expr ),* ) ) => {{
-        let diagnostic_name = stringify!($name);
-
-        let mut output = String::new();
-        let result = $name ( &mut output, $( $arg ),* );
-
-        let diagnostic = Diagnostic {
-            name: diagnostic_name.to_owned(),
-            success: result.is_ok(),
-            output: (!output.is_empty()).then_some(output),
-            error: result.as_ref().err().map(|e| format!("{:?}", e.error)),
-            help: result.err().and_then(|e| e.help),
-        };
-
-        let success = (*$callback)(diagnostic);
-
-        if !success {
-            return;
-        }
-    }}
-}
-
-macro_rules! output {
-    ( $dst:expr, $($arg:tt)* ) => {
-        anyhow::Context::context(write!( $dst, $($arg)* ), "write output")
-    };
-}
-
-macro_rules! outputln {
-    ( $dst:expr, $($arg:tt)* ) => {
-        anyhow::Context::context(writeln!( $dst, $($arg)* ), "write output")
-    };
-}
-
 #[derive(Default, Debug, Clone)]
 pub struct Args {
     pub server_port: Option<u16>,
@@ -53,6 +18,14 @@ pub struct Diagnostic {
     pub output: Option<String>,
     pub error: Option<String>,
     pub help: Option<String>,
+    pub links: Vec<Link>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Link {
+    pub name: String,
+    pub href: String,
+    pub description: String,
 }
 
 pub fn run(args: Args, callback: &mut dyn FnMut(Diagnostic) -> bool) {
@@ -68,13 +41,6 @@ pub fn run(args: Args, callback: &mut dyn FnMut(Diagnostic) -> bool) {
         native_tls_checks::run(&args, callback);
     }
 }
-
-struct DiagnosticError {
-    error: anyhow::Error,
-    help: Option<String>,
-}
-
-type DiagnosticResult = Result<(), DiagnosticError>;
 
 impl Diagnostic {
     pub fn into_json(self) -> JsonValue {
@@ -96,6 +62,24 @@ impl Diagnostic {
 
         if let Some(help_message) = self.help {
             object.insert("help".to_owned(), JsonValue::String(help_message));
+        }
+
+        if !self.links.is_empty() {
+            object.insert(
+                "links".to_owned(),
+                JsonValue::Array(
+                    self.links
+                        .into_iter()
+                        .map(|link| {
+                            let mut link_object = HashMap::new();
+                            link_object.insert("name".to_owned(), JsonValue::String(link.name));
+                            link_object.insert("href".to_owned(), JsonValue::String(link.href));
+                            link_object.insert("description".to_owned(), JsonValue::String(link.description));
+                            JsonValue::Object(link_object)
+                        })
+                        .collect(),
+                ),
+            );
         }
 
         JsonValue::Object(object)
@@ -146,10 +130,69 @@ impl Diagnostic {
                     write!(f, "\n\n### Help\n{help_message}")?;
                 }
 
+                if !self.0.links.is_empty() {
+                    write!(f, "\n\n### Links")?;
+                    for link in &self.0.links {
+                        write!(f, "\n{} ({}): {}", link.name, link.description, link.href)?;
+                    }
+                }
+
                 Ok(())
             }
         }
     }
+}
+
+macro_rules! diagnostic {
+    ( $callback:ident, $name:ident ( $( $arg:expr ),* ) ) => {{
+        use crate::doctor::{Diagnostic, DiagnosticCtx};
+
+        let diagnostic_name = stringify!($name);
+
+        let mut ctx = DiagnosticCtx::default();
+
+        let result = $name ( &mut ctx, $( $arg ),* );
+
+        let diagnostic = Diagnostic {
+            name: diagnostic_name.to_owned(),
+            success: result.is_ok(),
+            output: (!ctx.out.is_empty()).then_some(ctx.out),
+            error: result.as_ref().err().map(|e| format!("{:?}", e.error)),
+            help: result.err().and_then(|e| e.help),
+            links: ctx.links,
+        };
+
+        let success = (*$callback)(diagnostic);
+
+        if !success {
+            return;
+        }
+    }}
+}
+
+macro_rules! output {
+    ( $dst:expr, $($arg:tt)* ) => {
+        anyhow::Context::context(write!( $dst, $($arg)* ), "write output")
+    };
+}
+
+macro_rules! outputln {
+    ( $dst:expr, $($arg:tt)* ) => {
+        anyhow::Context::context(writeln!( $dst, $($arg)* ), "write output")
+    };
+}
+
+struct DiagnosticError {
+    error: anyhow::Error,
+    help: Option<String>,
+}
+
+type DiagnosticResult = Result<(), DiagnosticError>;
+
+#[derive(Default)]
+struct DiagnosticCtx {
+    out: String,
+    links: Vec<Link>,
 }
 
 impl From<anyhow::Error> for DiagnosticError {
@@ -192,8 +235,12 @@ fn write_cert_as_pem(mut out: impl fmt::Write, cert_der: &[u8]) -> fmt::Result {
     Ok(())
 }
 
-fn write_x509_io_link<'a>(mut out: impl fmt::Write, certs: impl Iterator<Item = &'a [u8]>) -> fmt::Result {
-    use base64::engine::general_purpose::STANDARD;
+fn write_x509_io_link<C>(mut out: impl fmt::Write, certs: C) -> fmt::Result
+where
+    C: Iterator,
+    C::Item: AsRef<[u8]>,
+{
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
 
     write!(out, "https://x509.io/?cert=")?;
@@ -207,11 +254,7 @@ fn write_x509_io_link<'a>(mut out: impl fmt::Write, certs: impl Iterator<Item = 
             write!(out, ",")?;
         }
 
-        let cert_base64 = STANDARD
-            .encode(cert_der)
-            .replace('/', "%2F")
-            .replace('+', "%2B")
-            .replace('=', "%3D");
+        let cert_base64 = URL_SAFE_NO_PAD.encode(cert_der.as_ref());
 
         write!(out, "{cert_base64}")?;
     }
@@ -220,19 +263,19 @@ fn write_x509_io_link<'a>(mut out: impl fmt::Write, certs: impl Iterator<Item = 
 }
 
 mod common_checks {
-    use core::fmt;
+    use std::fmt::Write as _;
 
-    use super::{Diagnostic, DiagnosticResult};
+    use super::{Diagnostic, DiagnosticCtx, DiagnosticResult};
 
     pub(super) fn run(callback: &mut dyn FnMut(Diagnostic) -> bool) {
         diagnostic!(callback, openssl_probe());
     }
 
-    pub(crate) fn openssl_probe(mut out: impl fmt::Write) -> DiagnosticResult {
+    pub(crate) fn openssl_probe(ctx: &mut DiagnosticCtx) -> DiagnosticResult {
         let result = openssl_probe::probe();
 
-        outputln!(out, "cert_file = {:?}", result.cert_file)?;
-        outputln!(out, "cert_dir = {:?}", result.cert_dir)?;
+        outputln!(ctx.out, "cert_file = {:?}", result.cert_file)?;
+        outputln!(ctx.out, "cert_dir = {:?}", result.cert_dir)?;
 
         Ok(())
     }
@@ -241,13 +284,13 @@ mod common_checks {
 #[cfg(feature = "rustls")]
 mod rustls_checks {
     use anyhow::Context as _;
-    use core::fmt;
     use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
     use rustls::{pki_types, DigitallySignedStruct, Error, SignatureScheme};
+    use std::fmt::Write as _;
     use std::ops::Deref;
     use std::path::Path;
 
-    use crate::doctor::DiagnosticError;
+    use crate::doctor::{DiagnosticCtx, DiagnosticError, Link};
 
     use super::{help, write_cert_as_pem, Args, AttachHelp as _, Diagnostic, DiagnosticResult};
 
@@ -277,12 +320,12 @@ mod rustls_checks {
         }
     }
 
-    fn rustls_load_native_certs(mut out: impl fmt::Write, root_store: &mut rustls::RootCertStore) -> DiagnosticResult {
+    fn rustls_load_native_certs(ctx: &mut DiagnosticCtx, root_store: &mut rustls::RootCertStore) -> DiagnosticResult {
         let result = rustls_native_certs::load_native_certs();
 
         for error in result.errors {
             outputln!(
-                out,
+                ctx.out,
                 "-> Error when loading native certs: {:?}",
                 anyhow::Error::new(error),
             )?;
@@ -290,8 +333,8 @@ mod rustls_checks {
 
         for cert in result.certs {
             if let Err(e) = root_store.add(cert.clone()) {
-                outputln!(out, "-> Invalid root certificate: {e}")?;
-                write_cert_as_pem(&mut out, &cert).context("failed to write the certificate as PEM")?;
+                outputln!(ctx.out, "-> Invalid root certificate: {e}")?;
+                write_cert_as_pem(&mut ctx.out, &cert).context("failed to write the certificate as PEM")?;
             }
         }
 
@@ -299,7 +342,7 @@ mod rustls_checks {
     }
 
     fn rustls_fetch_chain(
-        mut out: impl fmt::Write,
+        ctx: &mut DiagnosticCtx,
         subject_name: &str,
         port: Option<u16>,
         server_certificates: &mut Vec<pki_types::CertificateDer<'static>>,
@@ -307,7 +350,7 @@ mod rustls_checks {
         use std::io::Write as _;
         use std::net::TcpStream;
 
-        outputln!(out, "-> Connect to {subject_name}")?;
+        outputln!(ctx.out, "-> Connect to {subject_name}")?;
 
         let mut socket = TcpStream::connect((subject_name, port.unwrap_or(443)))
             .with_context(|| format!("failed to connect to {subject_name}..."))
@@ -322,7 +365,7 @@ mod rustls_checks {
         let subject_name = pki_types::ServerName::try_from(subject_name.to_owned()).context("invalid DNS name")?;
         let mut client = rustls::ClientConnection::new(config, subject_name).context("failed to create TLS client")?;
 
-        outputln!(out, "-> Fetch server certificates")?;
+        outputln!(ctx.out, "-> Fetch server certificates")?;
 
         loop {
             if client.wants_read() {
@@ -338,7 +381,8 @@ mod rustls_checks {
 
             if let Some(peer_certificates) = client.peer_certificates() {
                 for certificate in peer_certificates {
-                    write_cert_as_pem(&mut out, certificate).context("failed to write the peer certificate as PEM")?;
+                    write_cert_as_pem(&mut ctx.out, certificate)
+                        .context("failed to write the peer certificate as PEM")?;
                     server_certificates.push(certificate.clone().into_owned());
                 }
 
@@ -346,11 +390,18 @@ mod rustls_checks {
             }
         }
 
-        // TODO: refactor this with a common Ctx struct? À la Diplomat.
-        output!(out, "-> x509.io link: ")?;
-        super::write_x509_io_link(&mut out, server_certificates.iter().map(|cert| cert.deref()))
-            .context("failed to write the x509.io link")?;
-        outputln!(out, "")?;
+        // TODO: do something about the code duplication for the links? Maybe in the help module?
+        ctx.links.push(Link {
+            name: "x509.io Certificates Viewer".to_owned(),
+            href: {
+                let mut link_out = String::new();
+                super::write_x509_io_link(&mut link_out, server_certificates.iter().map(|cert| cert.deref()))
+                    .context("failed to write the x509.io link")?;
+                link_out
+            },
+            description: "View the extracted certification chain using x509.io certificates viewer in the browser"
+                .to_owned(),
+        });
 
         Ok(())
     }
