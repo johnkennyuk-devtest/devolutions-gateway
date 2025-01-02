@@ -26,9 +26,11 @@ namespace DevolutionsAgent.Resources
 
         internal static string INFO_URL = "https://server.devolutions.net";
 
-        internal static Feature PEDM_FEATURE = new Feature("Devolutions PEDM", "Installs Devolutions PEDM", false);
+        internal static Feature AGENT_FEATURE = new("!(loc.FeatureAgentName)", true, false) { Id = "F.Agent", Description = "!(loc.FeatureAgentDescription)" };
 
-        internal static Feature SESSION_FEATURE = new Feature("Devolutions Session", "Installs Devolutions Session", false);
+        internal static Feature PEDM_FEATURE = new("!(loc.FeaturePedmName)", "!(loc.FeaturePedmDescription)", false) { Id = "F.Pedm" };
+
+        internal static Feature SESSION_FEATURE = new("!(loc.FeatureSessionName)", "!(loc.FeatureSessionDescription)", false) { Id = "F.Session" };
 
         /// <summary>
         /// SDDL string representing desired %programdata%\devolutions\agent ACL
@@ -44,5 +46,17 @@ namespace DevolutionsAgent.Resources
         ///    BUILTIN\Users Allow ReadAndExecute, Synchronize
         /// </remarks>
         internal static string PROGRAM_DATA_SDDL = "O:SYG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;0x1201bf;;;LS)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)";
+
+        /// <summary>
+        /// SDDL string representing desired %programdata%\devolutions\agent\pedm ACL
+        /// Easiest way to generate an SDDL is to configure the required access, and then query the path with PowerShell: `Get-Acl | Format-List`
+        /// </summary>
+        /// <remarks>
+        /// Owner  : NT AUTHORITY\SYSTEM
+        /// Group  : NT AUTHORITY\SYSTEM
+        /// Access :
+        ///    NT AUTHORITY\SYSTEM Allow  FullControl
+        /// </remarks>
+        internal static string PROGRAM_DATA_PEDM_SDDL = "O:SYG:SYD:(A;OICI;FA;;;SY)";
     }
 }

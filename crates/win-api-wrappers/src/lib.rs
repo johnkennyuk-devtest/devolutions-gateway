@@ -1,6 +1,10 @@
 #[macro_use]
 extern crate tracing;
 
+pub mod dst;
+pub mod raw_buffer;
+pub mod str;
+
 #[cfg(target_os = "windows")]
 #[path = ""]
 mod lib_win {
@@ -17,6 +21,7 @@ mod lib_win {
     pub mod thread;
     pub mod token;
     pub mod ui;
+    pub mod user;
     pub mod utils;
     pub mod wts;
 

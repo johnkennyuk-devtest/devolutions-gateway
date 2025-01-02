@@ -1266,6 +1266,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tower-service",
  "tracing",
+ "uuid",
  "walkdir",
  "win-api-wrappers",
 ]
@@ -1312,13 +1313,14 @@ dependencies = [
  "serde_json",
  "tokio 1.42.0",
  "tower 0.3.1",
+ "uuid",
  "win-api-wrappers",
  "windows-registry 0.2.0",
 ]
 
 [[package]]
 name = "devolutions-pedm-shell-ext"
-version = "0.0.0"
+version = "2024.3.6"
 dependencies = [
  "devolutions-pedm-shared",
  "embed-resource",
@@ -1458,9 +1460,9 @@ checksum = "0d6ef0072f8a535281e4876be788938b528e9a1d43900b82c2569af7da799125"
 
 [[package]]
 name = "ebml-iterable"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "005525496ebdcae1d865c85fd71bc401a80921804ebb59c9340e2ab0c83aa1b0"
+checksum = "7b5173ac3752f08b526a6991509615e1a345b221ec3c58c7633433e8c9582312"
 dependencies = [
  "ebml-iterable-specification",
  "ebml-iterable-specification-derive",
@@ -5162,6 +5164,7 @@ dependencies = [
  "schemars_derive",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -5249,9 +5252,9 @@ checksum = "61697e0a1c7e512e84a621326239844a24d8207b4669b41bc18b32ea5cbf988b"
 
 [[package]]
 name = "serde"
-version = "1.0.215"
+version = "1.0.217"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6513c1ad0b11a9376da888e3e0baa0077f1aed55c17f50e7b2397136129fb88f"
+checksum = "02fc4265df13d6fa1d00ecff087228cc0a2b5f3c0e87e258d8b94a156e984c70"
 dependencies = [
  "serde_derive",
 ]
@@ -5267,9 +5270,9 @@ dependencies = [
 
 [[package]]
 name = "serde_derive"
-version = "1.0.215"
+version = "1.0.217"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad1e866f866923f252f05c889987993144fb74e722403468a4ebd70c3cd756c0"
+checksum = "5a9bf7cf98d04a2b28aead066b7496853d4779c9cc183c440dbac457641e19a0"
 dependencies = [
  "proc-macro2 1.0.88",
  "quote 1.0.37",
@@ -5302,9 +5305,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.133"
+version = "1.0.134"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7fceb2473b9166b2294ef05efcb65a3db80803f0b03ef86a5fc88a2b85ee377"
+checksum = "d00f4175c42ee48b15416f6193a959ba3a0d67fc699a0db9ad12df9f83991c7d"
 dependencies = [
  "itoa",
  "memchr",
@@ -6800,9 +6803,9 @@ dependencies = [
 
 [[package]]
 name = "webm-iterable"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "008955b5d96fc6e1e36f2c7f33120aef9e52b54efc5c76b6f1b125809513df78"
+checksum = "cd9fbf173b4b38f2f8bbb0082a0d4cb21f263a70811f5fccb1663c421c66d9f9"
 dependencies = [
  "ebml-iterable",
  "futures",
@@ -6860,6 +6863,7 @@ dependencies = [
  "thiserror 1.0.68",
  "tracing",
  "uuid",
+ "widestring 1.1.0",
  "windows 0.58.0",
 ]
 

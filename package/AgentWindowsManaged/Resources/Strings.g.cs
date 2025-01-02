@@ -25,6 +25,30 @@ namespace DevolutionsAgent.Resources
 		/// </summary>
 		public const string ProductDescription = "ProductDescription";		
 		/// <summary>
+		/// Devolutions Agent
+		/// </summary>
+		public const string FeatureAgentName = "FeatureAgentName";		
+		/// <summary>
+		/// Install the Devolutions Agent service
+		/// </summary>
+		public const string FeatureAgentDescription = "FeatureAgentDescription";		
+		/// <summary>
+		/// Devolutions PEDM
+		/// </summary>
+		public const string FeaturePedmName = "FeaturePedmName";		
+		/// <summary>
+		/// Enable PEDM features and install the shell extension
+		/// </summary>
+		public const string FeaturePedmDescription = "FeaturePedmDescription";		
+		/// <summary>
+		/// Devolutions Session
+		/// </summary>
+		public const string FeatureSessionName = "FeatureSessionName";		
+		/// <summary>
+		/// Install the Devolutions Session application
+		/// </summary>
+		public const string FeatureSessionDescription = "FeatureSessionDescription";		
+		/// <summary>
 		/// There is a problem with the entered data. Please correct the issue and try again.
 		/// </summary>
 		public const string ThereIsAProblemWithTheEnteredData = "ThereIsAProblemWithTheEnteredData";		
@@ -45,13 +69,9 @@ namespace DevolutionsAgent.Resources
 		/// </summary>
 		public const string x86VersionRequired = "x86VersionRequired";		
 		/// <summary>
-		/// Microsoft .NET Framework 4.8 is strongly recommended. Would you like to download it now?
+		/// The product requires Microsoft .NET Framework 4.8. Would you like to download it now?
 		/// </summary>
-		public const string DotNet48IsStrongRecommendedDownloadNow = "DotNet48IsStrongRecommendedDownloadNow";		
-		/// <summary>
-		/// The product requires Microsoft .NET Framework 4.6.2. Microsoft .NET Framework 4.8 is strongly recommended. Would you like to download it now?
-		/// </summary>
-		public const string Dotnet462IsRequired = "Dotnet462IsRequired";		
+		public const string Dotnet48IsRequired = "Dotnet48IsRequired";		
 		/// <summary>
 		/// View
 		/// </summary>

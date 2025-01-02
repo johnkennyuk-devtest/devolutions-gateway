@@ -54,64 +54,6 @@ function Merge-Tokens
     $OutputValue
 }
 
-function New-ModulePackage
-{
-    [CmdletBinding()]
-	param(
-        [Parameter(Mandatory=$true,Position=0)]
-        [string] $InputPath,
-        [Parameter(Mandatory=$true,Position=1)]
-        [string] $OutputPath,
-        [string] $TempPath
-    )
-
-    $UniqueId = New-Guid
-
-    if ([string]::IsNullOrEmpty($TempPath)) {
-        $TempPath = [System.IO.Path]::GetTempPath()
-    }
-
-    $PSRepoName = "psrepo-$UniqueId"
-    $PSRepoPath = Join-Path $TempPath $UniqueId
-
-    if (-Not (Test-Path -Path $InputPath -PathType 'Container')) {
-        throw "`"$InputPath`" does not exist"
-    }
-
-    $PSModulePath = $InputPath
-    $PSManifestFile = $(@(Get-ChildItem -Path $PSModulePath -Depth 1 -Filter "*.psd1")[0]).FullName
-    $PSManifest = Import-PowerShellDataFile -Path $PSManifestFile
-    $PSModuleName = $(Get-Item $PSManifestFile).BaseName
-    $PSModuleVersion = $PSManifest.ModuleVersion
-
-    New-Item -Path $PSRepoPath -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
-
-    $Params = @{
-        Name = $PSRepoName;
-        SourceLocation = $PSRepoPath;
-        PublishLocation = $PSRepoPath;
-        InstallationPolicy = "Trusted";
-    }
-
-    Register-PSRepository @Params | Out-Null
-
-    $OutputFileName = "${PSModuleName}.${PSModuleVersion}.nupkg"
-    $PSModulePackage = Join-Path $PSRepoPath $OutputFileName
-    Remove-Item -Path $PSModulePackage -ErrorAction 'SilentlyContinue'
-    Publish-Module -Path $PSModulePath -Repository $PSRepoName
-
-    Unregister-PSRepository -Name $PSRepoName | Out-Null
-
-    New-Item -Path $OutputPath -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
-    $OutputFile = Join-Path $OutputPath $OutputFileName
-    Copy-Item $PSModulePackage $OutputFile
-
-    Remove-Item $PSmodulePackage
-    Remove-Item -Path $PSRepoPath
-
-    $OutputFile
-}
-
 function Get-DestinationSymbolFile {
     param(
         [Parameter(Mandatory=$true,Position=0)]
@@ -495,7 +437,7 @@ class TlkRecipe
                 Remove-Item -Path "$DesktopAgentOutputPath" -Recurse -Force -ErrorAction SilentlyContinue
                 New-Item -Path "$DesktopAgentOutputPath" -ItemType 'Directory' -Force | Out-Null
 
-                $BuiltDesktop = Get-ChildItem -Path "./dotnet/DesktopAgent/bin/Release/*" -Recurse -Include *.dll,*.exe,*.pdb
+                $BuiltDesktop = Get-ChildItem -Path "./dotnet/DesktopAgent/bin/Release/net48/*" -Recurse -Include *.dll,*.exe,*.pdb
 
                 foreach ($File in $BuiltDesktop) {
                     Copy-Item $File.FullName -Destination $DesktopAgentOutputPath
@@ -523,18 +465,11 @@ class TlkRecipe
 
         $PSManifestFile = $(@(Get-ChildItem -Path $DGatewayPSModulePath -Depth 1 -Filter "*.psd1")[0]).FullName
         $PSManifest = Import-PowerShellDataFile -Path $PSManifestFile
-        $PSModuleName = $(Get-Item $PSManifestFile).BaseName
         $PSModuleVersion = $PSManifest.ModuleVersion
 
         if ($PackageVersion -ne $PSModuleVersion) {
             Write-Warning "PowerShell module version mismatch: $PSModuleVersion (expected: $PackageVersion)"
         }
-
-        $PSModuleParentPath = Split-Path $DGatewayPSModulePath -Parent
-        $PSModuleZipFilePath = Join-Path $PSModuleParentPath "$PSModuleName-ps-$PSModuleVersion.zip"
-        Compress-Archive -Path $DGatewayPSModulePath -Destination $PSModuleZipFilePath -Update
-
-        New-ModulePackage $DGatewayPSModulePath $PSModuleParentPath
 
         $DGatewayPSModuleStagingPath = Join-Path $Env:Temp "DevolutionsGateway"
         New-Item -Force -Type Directory $DGatewayPSModuleStagingPath
@@ -572,12 +507,12 @@ class TlkRecipe
             # Generate a language transform
             & 'torch.exe' "$BaseMsi" "$LangMsi" "-o" "$Transform" | Out-Host
             # Embed the transform in the base MSI
-            & 'cscript.exe' "/nologo" "../Windows/WiSubStg.vbs" "$BaseMsi" "$Transform" "$($PackageLanguage.LCID)" | Out-Host
+            & 'cscript.exe' "/nologo" "$($this.SourcePath)/ci/WiSubStg.vbs" "$BaseMsi" "$Transform" "$($PackageLanguage.LCID)" | Out-Host
         }
 
         # Set the complete language list on the base MSI
         $LCIDs = ([TlkRecipe]::PackageLanguages | ForEach-Object { $_.LCID }) -join ','
-        & 'cscript.exe' "/nologo" "../Windows/WiLangId.vbs" "$BaseMsi" "Package" "$LCIDs" | Out-Host
+        & 'cscript.exe' "/nologo" "$($this.SourcePath)/ci/WiLangId.vbs" "$BaseMsi" "Package" "$LCIDs" | Out-Host
 
         switch ($this.Product) {
             "gateway" {
@@ -701,93 +636,6 @@ class TlkRecipe
         } else {
             throw "Managed packaging for $($this.Product) is not supported"
         }
-    }
-
-    [void] Package_Windows() {
-        if ($this.Product -ne 'gateway') {
-            throw "Legacy packaging for $($this.Product) is not supported"
-        }
-
-        $ShortVersion = $this.Version.Substring(2) # msi version
-        $TargetArch = $this.Target.WindowsArchitecture()
-
-        Push-Location
-        Set-Location "$($this.SourcePath)/package/$($this.Target.Platform)"
-
-        if (Test-Path Env:DGATEWAY_EXECUTABLE) {
-            $DGatewayExecutable = $Env:DGATEWAY_EXECUTABLE
-        } else {
-            throw ("Specify DGATEWAY_EXECUTABLE environment variable")
-        }
-
-        $PSModulePaths = $this.Package_Windows_Prepare_Ps1Module()
-        $DGatewayPSModulePath = $PSModulePaths[0]
-        $DGatewayPSModuleStagingPath = $PSModulePaths[1]
-
-        $TargetConfiguration = "Release"
-        $ActionsProjectPath = Join-Path $(Get-Location) 'Actions'
-
-        if ((Get-Command "MSBuild.exe" -ErrorAction SilentlyContinue) -Eq $Null) {
-            throw 'MSBuild was not found in the PATH'
-        }
-
-        & 'MSBuild.exe' "$(Join-Path $ActionsProjectPath 'DevolutionsGateway.Installer.Actions.sln')" "/p:Configuration=$TargetConfiguration" "/p:Platform=$TargetArch" | Out-Host
-
-        $HeatArgs = @('dir', "$DGatewayPSModuleStagingPath",
-            '-dr', 'D.DGATEWAYPSROOTDIRECTORY',
-            '-cg', 'CG.DGatewayPSComponentGroup',
-            '-var', 'var.DGatewayPSSourceDir',
-            '-nologo', '-srd', '-suid', '-scom', '-sreg', '-sfrag', '-gg')
-
-        & 'heat.exe' $HeatArgs + @('-t', 'HeatTransform64.xslt', '-o', "$($this.PackageName())-$TargetArch.wxs") | Out-Host
-
-        $WixExtensions = @('WixUtilExtension', 'WixUIExtension', 'WixFirewallExtension')
-        $WixExtensions += $(Join-Path $(Get-Location) 'WixUserPrivilegesExtension.dll')
-
-        $WixArgs = @($WixExtensions | ForEach-Object { @('-ext', $_) }) + @(
-            "-dDGatewayPSSourceDir=$DGatewayPSModuleStagingPath",
-            "-dDGatewayExecutable=$DGatewayExecutable",
-            "-dVersion=$ShortVersion",
-            "-dActionsLib=$(Join-Path $ActionsProjectPath $TargetArch $TargetConfiguration 'DevolutionsGateway.Installer.Actions.dll')",
-            "-v")
-
-        $WixFiles = Get-ChildItem -Include '*.wxs' -Recurse
-
-        $InputFiles = $WixFiles | Foreach-Object { Resolve-Path $_.FullName -Relative }
-        $ObjectFiles = $WixFiles | ForEach-Object { $_.BaseName + '.wixobj' }
-
-        $Cultures = @('en-US', 'fr-FR')
-
-        foreach ($Culture in $Cultures) {
-            & 'candle.exe' '-nologo' $InputFiles $WixArgs "-dPlatform=$TargetArch" | Out-Host
-            $OutputFile = "$($this.PackageName())_${Culture}.msi"
-
-            if ($Culture -Eq 'en-US') {
-                $OutputFile = "$($this.PackageName()).msi"
-            }
-
-            & 'light.exe' "-nologo" $ObjectFiles "-cultures:${Culture}" "-loc" "$($this.PackageName)_${Culture}.wxl" `
-                "-out" $OutputFile $WixArgs "-dPlatform=$TargetArch" "-sice:ICE61" | Out-Host
-        }
-
-        foreach ($Culture in $($Cultures | Select-Object -Skip 1)) {
-            & 'torch.exe' "$($this.PackageName()).msi" "$($this.PackageName())_${Culture}.msi" "-o" "${Culture}_$TargetArch.mst" | Out-Host
-            & 'cscript.exe' "/nologo" "WiSubStg.vbs" "$($this.PackageName()).msi" "${Culture}_$TargetArch.mst" "1036" | Out-Host
-            & 'cscript.exe' "/nologo" "WiLangId.vbs" "$($this.PackageName()).msi" "Package" "1033,1036" | Out-Host
-        }
-
-        if (Test-Path Env:DGATEWAY_PSMODULE_CLEAN) {
-            # clean up the extracted PowerShell module directory
-            Remove-Item -Path $DGatewayPSModulePath -Recurse
-            Remove-Item -Path $DGatewayPSModuleStagingPath -Recurse
-        }
-
-        if (Test-Path Env:DGATEWAY_PACKAGE) {
-            $DGatewayPackage = $Env:DGATEWAY_PACKAGE
-            Copy-Item -Path "$($this.PackageName()).msi" -Destination $DGatewayPackage
-        }
-
-        Pop-Location
     }
 
     [void] Package_Linux() {
@@ -985,9 +833,6 @@ class TlkRecipe
             }
 
             switch ($PackageOption) {
-                "legacy" {
-                    $this.Package_Windows()
-                }
                 "generate" {
                     $this.Package_Windows_Managed($true)
                 }
@@ -1033,7 +878,7 @@ function Invoke-TlkStep {
         [Parameter(Position=0,Mandatory=$true)]
 		[ValidateSet('build','package','test')]
 		[string] $TlkVerb,
-        [ValidateSet('legacy', 'generate', 'assemble')]
+        [ValidateSet('generate', 'assemble')]
         [string] $PackageOption,
 		[ValidateSet('windows','macos','linux')]
 		[string] $Platform,

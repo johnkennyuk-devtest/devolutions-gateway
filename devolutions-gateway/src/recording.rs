@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use streamer::SignalWriter;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufWriter};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::{fs, io};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
@@ -221,12 +221,20 @@ enum RecordingManagerMessage {
         id: Uuid,
         channel: oneshot::Sender<Option<OnGoingRecordingState>>,
     },
+    ListFiles {
+        id: Uuid,
+        channel: oneshot::Sender<Vec<Utf8PathBuf>>,
+    },
     GetCount {
         channel: oneshot::Sender<usize>,
     },
     UpdateRecordingPolicy {
         id: Uuid,
         session_must_be_recorded: bool,
+    },
+    SubscribeToSessionEndNotification {
+        id: Uuid,
+        channel: oneshot::Sender<Arc<Notify>>,
     },
 }
 
@@ -255,6 +263,12 @@ impl fmt::Debug for RecordingManagerMessage {
                 .field("id", id)
                 .field("session_must_be_recorded", session_must_be_recorded)
                 .finish(),
+            RecordingManagerMessage::SubscribeToSessionEndNotification { id, channel: _ } => {
+                f.debug_struct("SubscribeToOngoingRecording").field("id", id).finish()
+            }
+            RecordingManagerMessage::ListFiles { id, channel: _ } => {
+                f.debug_struct("ListFiles").field("id", id).finish()
+            }
         }
     }
 }
@@ -341,6 +355,28 @@ impl RecordingMessageSender {
 
         Ok(())
     }
+
+    pub(crate) async fn subscribe_to_recording_finish(&self, recording_id: Uuid) -> anyhow::Result<Arc<Notify>> {
+        let (tx, rx) = oneshot::channel();
+        self.channel
+            .send(RecordingManagerMessage::SubscribeToSessionEndNotification {
+                id: recording_id,
+                channel: tx,
+            })
+            .await?;
+        Ok(rx.await?)
+    }
+
+    pub(crate) async fn list_files(&self, recording_id: Uuid) -> anyhow::Result<Vec<Utf8PathBuf>> {
+        let (tx, rx) = oneshot::channel();
+        self.channel
+            .send(RecordingManagerMessage::ListFiles {
+                id: recording_id,
+                channel: tx,
+            })
+            .await?;
+        Ok(rx.await?)
+    }
 }
 
 pub struct RecordingMessageReceiver {
@@ -399,6 +435,7 @@ impl Ord for DisconnectedTtl {
 pub struct RecordingManagerTask {
     rx: RecordingMessageReceiver,
     ongoing_recordings: HashMap<Uuid, OnGoingRecording>,
+    recording_end_notifier: HashMap<Uuid, Arc<Notify>>,
     recordings_path: Utf8PathBuf,
     session_manager_handle: SessionMessageSender,
     job_queue_handle: JobQueueHandle,
@@ -414,6 +451,7 @@ impl RecordingManagerTask {
         Self {
             rx,
             ongoing_recordings: HashMap::new(),
+            recording_end_notifier: HashMap::new(),
             recordings_path,
             session_manager_handle,
             job_queue_handle,
@@ -556,15 +594,25 @@ impl RecordingManagerTask {
                 .save_to_file(&ongoing.manifest_path)
                 .with_context(|| format!("write manifest at {}", ongoing.manifest_path))?;
 
+            // Notify all the streamers that recording has ended.
+            if let Some(notify) = self.recording_end_notifier.get(&id) {
+                notify.notify_one();
+            }
+
+            info!(%id, "Start video remuxing operation");
             if recording_file_path.extension() == Some(RecordingFileType::WebM.extension()) {
                 if cadeau::xmf::is_init() {
                     debug!(%recording_file_path, "Enqueue video remuxing operation");
 
+                    // Schedule 60 seconds to wait for the streamers to release the file.
                     let _ = self
                         .job_queue_handle
-                        .enqueue(RemuxJob {
-                            input_path: recording_file_path,
-                        })
+                        .schedule(
+                            RemuxJob {
+                                input_path: recording_file_path,
+                            },
+                            time::OffsetDateTime::now_utc() + time::Duration::seconds(60),
+                        )
                         .await;
                 } else {
                     debug!("Video remuxing was skipped because XMF native library is not loaded");
@@ -623,11 +671,27 @@ impl RecordingManagerTask {
                     }
 
                     self.ongoing_recordings.remove(&id);
+                    self.recording_end_notifier.remove(&id);
                 }
                 _ => {
                     trace!(%id, "Recording should not be removed yet");
                 }
             }
+        }
+    }
+
+    fn subscribe(&mut self, id: Uuid) -> anyhow::Result<Arc<Notify>> {
+        debug!(%id, "Subscribing to ongoing recording");
+        if !self.ongoing_recordings.contains_key(&id) {
+            anyhow::bail!("unknown recording for ID {id}");
+        }
+
+        if let Some(notify) = self.recording_end_notifier.get(&id) {
+            Ok(Arc::clone(notify))
+        } else {
+            let notify = Arc::new(Notify::new());
+            self.recording_end_notifier.insert(id, Arc::clone(&notify));
+            Ok(notify)
         }
     }
 }
@@ -722,6 +786,33 @@ async fn recording_manager_task(
                             );
                         }
                     },
+                    RecordingManagerMessage::SubscribeToSessionEndNotification {id, channel } => {
+                        match manager.subscribe(id) {
+                            Ok(notifier) => {
+                                let _ = channel.send(notifier);
+                            },
+                            Err(e) => error!(error = format!("{e:#}"), "subscribe to session end notification"),
+                        }
+                    },
+                    RecordingManagerMessage::ListFiles { id, channel } => {
+                        match manager.ongoing_recordings.get(&id) {
+                            Some(recording) => {
+                                let recordings_folder = recording.manifest_path.parent().expect("a parent");
+
+                                let files = recording
+                                    .manifest
+                                    .files
+                                    .iter()
+                                    .map(|file| recordings_folder.join(&file.file_name))
+                                    .collect();
+
+                                let _ = channel.send(files);
+                            }
+                            None => {
+                                warn!(%id, "No recording found for provided ID");
+                            }
+                        }
+                    }
                 }
             }
             _ = shutdown_signal.wait() => {

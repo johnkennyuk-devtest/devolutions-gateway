@@ -177,6 +177,7 @@ internal class Program
                 AllowSameVersionUpgrades = true,
                 DowngradeErrorMessage = "!(loc.NewerInstalled)",
                 Schedule = UpgradeSchedule.afterInstallInitialize,
+                MigrateFeatures = true,
             },
             Media = new List<Media>
             {
@@ -201,6 +202,7 @@ internal class Program
             project.CandleOptions = "-fips";
         }
 
+        project.DefaultFeature = Includes.AGENT_FEATURE;
         project.Dirs = new Dir[]
         {
             new ("%ProgramFiles%", new Dir(Includes.VENDOR_NAME, new InstallDir(Includes.SHORT_NAME)
@@ -241,7 +243,7 @@ internal class Program
                             Vital = true,
                             Name = Includes.SERVICE_NAME,
                             DisplayName = Includes.SERVICE_DISPLAY_NAME,
-                            Description = Includes.SERVICE_DISPLAY_NAME,
+                            Description = Includes.SERVICE_DESCRIPTION,
                             FirstFailureActionType = FailureActionType.restart,
                             SecondFailureActionType = FailureActionType.restart,
                             ThirdFailureActionType = FailureActionType.restart,
@@ -257,7 +259,7 @@ internal class Program
                 },
                 Dirs = new[]
                 {
-                    new Dir(Includes.PEDM_FEATURE, "desktop", new Files($"{DevolutionsDesktopAgentPath}\\*.*"))
+                    new Dir(Includes.PEDM_FEATURE, "desktop", new Files(Includes.PEDM_FEATURE, $"{DevolutionsDesktopAgentPath}\\*.*"))
                 }
             })),
         };
@@ -273,6 +275,12 @@ internal class Program
                 AttributesDefinition = "Type=string; Component:Permanent=yes",
                 Win64 = project.Platform == Platform.x64,
                 RegistryKeyAction = RegistryKeyAction.create,
+            },
+            new (RegistryHive.LocalMachine, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", Includes.SERVICE_NAME, $"[{AgentProperties.InstallDir}]desktop\\DevolutionsDesktopAgent.exe")
+            {
+                Win64 = project.Platform == Platform.x64,
+                RegistryKeyAction = RegistryKeyAction.create,
+                Feature = Includes.PEDM_FEATURE,
             }
         };
         project.Properties = AgentProperties.Properties.Select(x => x.ToWixSharpProperty()).ToArray();
@@ -387,9 +395,9 @@ internal class Program
             e.Result = ActionResult.UserExit;
         }
 
-        if (!CustomActions.TryGetInstalledNetFx45Version(out uint netfx45Version) || netfx45Version < 394802)
+        if (!CustomActions.TryGetInstalledNetFx45Version(out uint netfx45Version) || netfx45Version < 528040)
         {
-            if (MessageBox.Show(I18n(Strings.Dotnet462IsRequired), I18n(Strings.AgentDlg_Title),
+            if (MessageBox.Show(I18n(Strings.Dotnet48IsRequired), I18n(Strings.AgentDlg_Title),
                     MessageBoxButtons.YesNo) == DialogResult.Yes)
             {
                 Process.Start("https://go.microsoft.com/fwlink/?LinkId=2085155");
@@ -399,13 +407,6 @@ internal class Program
             e.Result = ActionResult.UserExit;
         }
 
-        if (netfx45Version < 528040)
-        {
-            if (MessageBox.Show(I18n(Strings.DotNet48IsStrongRecommendedDownloadNow), I18n(Strings.AgentDlg_Title),
-                    MessageBoxButtons.YesNo) == DialogResult.Yes)
-            {
-                Process.Start("https://go.microsoft.com/fwlink/?LinkId=2085155");
-            }
-        }
+        e.Session["ADDLOCAL"] = Helpers.AppSearch.InstalledFeatures.Select(x => x.FeatureName).JoinBy(",");
     }
 }
