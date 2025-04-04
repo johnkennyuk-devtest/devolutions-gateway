@@ -2,6 +2,201 @@
 
 This document provides a list of notable changes introduced in Devolutions Gateway service, installer and Jetsocat.
 
+## 2025.1.4 (2025-03-18)
+
+### Features
+
+- _dgw_: add --config-path command-line option ([#1268](https://github.com/Devolutions/devolutions-gateway/issues/1268)) ([3bcff86239](https://github.com/Devolutions/devolutions-gateway/commit/3bcff862395594f9606cdc4a0fc2fe3dcd36ead2)) ([ARC-307](https://devolutions.atlassian.net/browse/ARC-307)) 
+
+### Bug Fixes
+
+- _dgw_: improve debug logs for recording path canonicalization ([#1273](https://github.com/Devolutions/devolutions-gateway/issues/1273)) ([6e74bcc425](https://github.com/Devolutions/devolutions-gateway/commit/6e74bcc4256e5b6c67f798d3835b5277cc245633)) 
+
+  It’s easier to diagnostic why canonicalization failed now.
+
+- _dgw_: reopen the certificate store for each request ([#1274](https://github.com/Devolutions/devolutions-gateway/issues/1274)) ([7c2c042106](https://github.com/Devolutions/devolutions-gateway/commit/7c2c04210693d5630861fae90cd0c20a1fe38a10)) ([DGW-256](https://devolutions.atlassian.net/browse/DGW-256)) 
+
+  When using the system certificate store, we now properly reopen the
+  store for each HTTP request, eliminating the need for restarting the
+  service when renewing the certificate.
+
+## 2025.1.3 (2025-03-05)
+
+### Bug Fixes
+
+- _agent-installer_: don't fail an uninstall if the shell extension can't be unregistered ([#1249](https://github.com/Devolutions/devolutions-gateway/issues/1249)) ([67bc5dfc01](https://github.com/Devolutions/devolutions-gateway/commit/67bc5dfc01edcde91c4fe1b57350dea8e74ed7f3)) 
+
+  An unexpected error unregistering the PEDM shell extension can cause an
+  uninstall to fail; this leads to a bad posture on the user machine.
+
+- _dgw_: fix a bug where shadowing player was sometimes failing with high frame rate ([#1253](https://github.com/Devolutions/devolutions-gateway/issues/1253)) ([e415a674d9](https://github.com/Devolutions/devolutions-gateway/commit/e415a674d9c7c1adc089c420566deff9feb29cf3)) 
+
+- _installer_: ensure NetworkService has proper file permissions ([#1260](https://github.com/Devolutions/devolutions-gateway/issues/1260)) ([956741757e](https://github.com/Devolutions/devolutions-gateway/commit/956741757e51157a0c03021d474164471f1f894b)) 
+
+  We've had sporadic issues where users cannot update the revocation list
+  due to a permissions error on the .jrl file (access denied deleting the
+  original file).
+  
+  Likely cause:
+  
+  - Gateway was installed and created this file(s) at or before version
+  2024.1.5
+  - In subsequent versions, we switched the service account to
+  `NetworkService` and updated the DACL applied to the top-level
+  %programdata%\Devolutions\Gateway directory
+  - However, files created previously did not retroactively inherit
+  `NetworkService`'s new ACL
+  - This doesn't matter for most files where `Users` has read and execute
+  permission
+  - Files that need `Modify` permission won't have it (for example, the
+  .jrl and existing log files)
+  
+  This version:
+  
+  - Updates the SDDL set on the top-level
+  %programdata%\Devolutions\Gateway directory to ensure that
+  `NetworkService` can delete subfolders and files
+  - Forcibly resets the ACL on files in the program data directory
+
+- _dgw_: fix WebSocket connection hanging at the end of communication ([#1243](https://github.com/Devolutions/devolutions-gateway/issues/1243)) ([a457fdc90c](https://github.com/Devolutions/devolutions-gateway/commit/a457fdc90c22e1bcac65f948ca19f1506166d3b1)) 
+
+  WebSocket close frames were not sent on session termination.
+  With this patch, we properly send WebSocket close frames when session terminates.
+
+- _dgw_: fix missing webapp in deb ([#1259](https://github.com/Devolutions/devolutions-gateway/issues/1259)) ([dd4f3d5ed2](https://github.com/Devolutions/devolutions-gateway/commit/dd4f3d5ed2045d86f33c2f51a10d49d35810d700)) 
+
+### Build
+
+- _dgw,agent_: target Ubuntu 18.04 ([#1241](https://github.com/Devolutions/devolutions-gateway/issues/1241)) ([27f12ef910](https://github.com/Devolutions/devolutions-gateway/commit/27f12ef9101f77e7960b75bb9c1e278391899abd)) 
+
+  Properly target ubuntu-18.04, including for the cadeau library which was
+  just released with ubuntu-18.04 targeting as well. By targeting
+  ubuntu-18.04, we are forward-compatible with ubuntu 20.04, 22.04, 24.04
+  but we are also compatible with RHEL8, which uses a version of
+  glibc older than ubuntu 20.04.
+
+- _dgw_: don't use libsql default features ([#1254](https://github.com/Devolutions/devolutions-gateway/issues/1254)) ([d05b9a91df](https://github.com/Devolutions/devolutions-gateway/commit/d05b9a91dfda45f88a2a648f03ec6c6330081b8e)) 
+
+## 2025.1.2 (2025-02-20)
+
+### Features
+
+- _agent-installer_: disable restart manager in Agent MSI ([#1214](https://github.com/Devolutions/devolutions-gateway/issues/1214)) ([0177aed842](https://github.com/Devolutions/devolutions-gateway/commit/0177aed842570009d11d902fd2ca52f966e74fc8)) 
+
+  The restart manager is intended to reduce the number of reboots caused by
+  locked files. It attempts to shutdown and relaunch executables that are using
+  locked files required by the installer. An interactive prompt is shown to the
+  user offering a choice between shutdown/restart of the application (as long as
+  the application is integrated with the restart manager) or to reboot.
+
+### Bug Fixes
+
+- _dgw_: fix an issue where 'Unknown error' was displayed at the end of recording playback ([#1220](https://github.com/Devolutions/devolutions-gateway/issues/1220)) ([46a551848d](https://github.com/Devolutions/devolutions-gateway/commit/46a551848da5d125b344176e616c610e7ea520af)) 
+
+- _dgw_: fix an issue where recording ended but the streaming task was not terminated ([#1222](https://github.com/Devolutions/devolutions-gateway/issues/1222)) ([404ba8aa11](https://github.com/Devolutions/devolutions-gateway/commit/404ba8aa11a33b3772ee359a76d0c911f84992f3)) 
+
+- _dgw_: revert service name to "devolutions-gateway" on Linux ([#1226](https://github.com/Devolutions/devolutions-gateway/issues/1226)) ([5b4c2160f4](https://github.com/Devolutions/devolutions-gateway/commit/5b4c2160f4ca19c76a1eb9ec3d615604b99d47ed)) 
+
+  The service name was mistakenly renamed to "devolutions-agent" in the previous release.
+
+- _agent-installer_: prevent invalid configuration due to installer sequencing ([#1229](https://github.com/Devolutions/devolutions-gateway/issues/1229)) ([d102dc22fb](https://github.com/Devolutions/devolutions-gateway/commit/d102dc22fb17373f2a3f841032fa9208e016f607)) 
+
+  The PEDM/Session feature toggle was manipulating `agent.json` _after_
+  `InstallFiles`.
+  
+  The action that initializes `agent.json` was not actually added to the custom
+  actions, and in any case it was sequenced _before_ `StartServices` (which is
+  _after_ `InstallFiles`).
+
+## 2025.1.1 (2025-02-05)
+
+### Bug Fixes
+
+- _agent_: fix downgrade logic for unreleased Devolutions Gateway ([#1207](https://github.com/Devolutions/devolutions-gateway/issues/1207)) ([a978ec6c59](https://github.com/Devolutions/devolutions-gateway/commit/a978ec6c59641a15378fbc4c623283e912f3d32a)) 
+
+  Fix an updater corner case where the user is trying to downgrade to the
+  latest specified version in `productinfo.htm` while a newer unreleased
+  version is installed locally.
+
+- _dgw_: mute recording player by default to allow autoplay in web browsers ([#1208](https://github.com/Devolutions/devolutions-gateway/issues/1208)) ([1266e8b327](https://github.com/Devolutions/devolutions-gateway/commit/1266e8b32763e14467e9b650856f85084bcb0d08)) 
+
+- _agent-installer_: add experimental tag to PEDM and session features ([#1211](https://github.com/Devolutions/devolutions-gateway/issues/1211)) ([29b2facc61](https://github.com/Devolutions/devolutions-gateway/commit/29b2facc610ca0bd994af8a48f10337781a4205f)) 
+
+## 2025.1.0 (2025-01-29)
+
+### Features
+
+- _dgw_: session shadowing ([#1076](https://github.com/Devolutions/devolutions-gateway/issues/1076)) ([456d057b60](https://github.com/Devolutions/devolutions-gateway/commit/456d057b6040b09a3b727d57d63dd6cd4357e0a7)) ([#1131](https://github.com/Devolutions/devolutions-gateway/issues/1131)) ([ac7988cc51](https://github.com/Devolutions/devolutions-gateway/commit/ac7988cc51762a8a9dccfe20e9f9995208c8efeb)) ([#1148](https://github.com/Devolutions/devolutions-gateway/issues/1148)) ([b68bf85039](https://github.com/Devolutions/devolutions-gateway/commit/b68bf85039aaa2402d006c7e85f30e4ce74fc7e1)) ([#1165](https://github.com/Devolutions/devolutions-gateway/issues/1165)) ([8a52585c30](https://github.com/Devolutions/devolutions-gateway/commit/8a52585c30863993571c81da08753332c862c758)) ([#1188](https://github.com/Devolutions/devolutions-gateway/issues/1188)) ([5539ac6066](https://github.com/Devolutions/devolutions-gateway/commit/5539ac60667245e5e5a5d8a99317e2ff5314f635)) ([#1193](https://github.com/Devolutions/devolutions-gateway/issues/1193)) ([8d7c3d592b](https://github.com/Devolutions/devolutions-gateway/commit/8d7c3d592be7a153f6db9f3d417330c9a66feb22)) ([#1181](https://github.com/Devolutions/devolutions-gateway/issues/1181)) ([8cb4c66fec](https://github.com/Devolutions/devolutions-gateway/commit/8cb4c66fec4981347ae366b882a7e6d514c069ed)) 
+
+- _dgw_: add a replay button on streaming finish ([#1189](https://github.com/Devolutions/devolutions-gateway/issues/1189)) ([3177eae885](https://github.com/Devolutions/devolutions-gateway/commit/3177eae885241c42151fb8348e441511fae25e9e)) 
+
+### Bug Fixes
+
+- _jetsocat_: (also) return one link per certificate ([#1137](https://github.com/Devolutions/devolutions-gateway/issues/1137)) ([68f0523118](https://github.com/Devolutions/devolutions-gateway/commit/68f0523118593285198cff35a3c4edffe6632eaa)) ([DGW-235](https://devolutions.atlassian.net/browse/DGW-235)) 
+
+  Make jetsocat doctor return one link per certificate in addition to
+  the chain link.
+
+- _dgw_: improve log quality ([#1190](https://github.com/Devolutions/devolutions-gateway/issues/1190)) ([8b3118a640](https://github.com/Devolutions/devolutions-gateway/commit/8b3118a640a815a0258e35e5db960cd378a3d716)) 
+
+  - Enhance the "Peer failure" log to include the peer address and the
+  listener kind (in fact, always TCP).
+  - Instead of an ERROR-level trace, log an INFO-level trace when the
+  wrong protocol is used on the TCP listener.
+
+- _dgw,jetsocat_: implement WebSocket keep-alive logic ([#1202](https://github.com/Devolutions/devolutions-gateway/issues/1202)) ([22e9e7e73f](https://github.com/Devolutions/devolutions-gateway/commit/22e9e7e73fd572ff676dd10a971f75454f1cd84a)) 
+
+  Our WebSockets are already responding Pong messages to Ping messages,
+  but they were never sending Ping messages.
+
+### Build
+
+- _dgw_: correct typo causing missing packager ([#1176](https://github.com/Devolutions/devolutions-gateway/issues/1176)) ([dd17375552](https://github.com/Devolutions/devolutions-gateway/commit/dd17375552f13f97151138fd938514f977b1af35)) 
+
+  The control template expects a variable named `packager` but `package` was passed.
+
+- _dgw_: move libxmf.so to /usr/lib ([#1175](https://github.com/Devolutions/devolutions-gateway/issues/1175)) ([0ed70d21ba](https://github.com/Devolutions/devolutions-gateway/commit/0ed70d21bac2cbf31dcc9dbe5615a8e573b73717)) 
+
+  This moves _libxmf.so_ from `/usr/share/devolutions-gateway` to `/usr/lib/devolutions-gateway`.
+  
+  According to the [FHS](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch04s11.html),
+  `/usr/share` is for architecture-independent data files.
+
+- Add RPM for gateway and agent ([#1179](https://github.com/Devolutions/devolutions-gateway/issues/1179)) ([3b8667db83](https://github.com/Devolutions/devolutions-gateway/commit/3b8667db8366702d2033699dd7578efd3f3c1c0e)) 
+
+  This commit adds RPM packages for Gateway and Agent to the release
+  assets.
+  
+  The rpm is generated with fpm, a Linux packaging tool.
+  
+  The RPM includes all the assets of the corresponding Debian package,
+  including the changelog, copyright, maintainer scripts, and
+  webapp/libxmf.so for Gateway.
+  
+  Tested with RHEL 9 (glibc 2.34).
+
+- Add changelogs for Linux packaging ([#1185](https://github.com/Devolutions/devolutions-gateway/issues/1185)) ([fdf2bb1667](https://github.com/Devolutions/devolutions-gateway/commit/fdf2bb166712573da8133535273fadc6cb85f462)) ([DGW-237](https://devolutions.atlassian.net/browse/DGW-237)) 
+
+- Remove unused Linux deps ([#1194](https://github.com/Devolutions/devolutions-gateway/issues/1194)) ([efde6343a0](https://github.com/Devolutions/devolutions-gateway/commit/efde6343a0f6e4996e37d9575c5029f16e5ffc5d)) 
+
+  This removes unused dependencies.
+  libc6 on Debian is glibc on RPM-based systems.
+  
+  libc6 version is bumped to 2.31 as that is the version provided by the
+  CI runner generating the build.
+  libgcc-s1 dependency is removed as it is a dependency of libc6.
+  
+  ```
+  > ldd devolutions-gateway
+    linux-vdso.so.1 (0x000077b2330a9000)
+    libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000077b22f5b1000)
+    libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000077b22f4c4000)
+    libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000077b22f200000)
+    /lib64/ld-linux-x86-64.so.2 (0x000077b2330ab000)
+  ```
+  
+  The ldd output for Agent is identical.
+
 ## 2024.3.6 (2024-12-02)
 
 ### Features
@@ -45,7 +240,7 @@ This document provides a list of notable changes introduced in Devolutions Gatew
 
 - _webapp_: the initial 401 error is shown when it should not ([#1102](https://github.com/Devolutions/devolutions-gateway/issues/1102)) ([b54a666776](https://github.com/Devolutions/devolutions-gateway/commit/b54a666776420106bb694d08700e7ae234b9ab51)) ([DGW-226](https://devolutions.atlassian.net/browse/DGW-226)) 
 
-## 2024.3.4 (2024-11-8)
+## 2024.3.4 (2024-11-08)
 
 ### Features
 

@@ -29,7 +29,7 @@ concurrency: gateway-release
 jobs:
   preflight:
     name: Preflight
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.get-run.outputs.run }}
       version: ${{ steps.get-version.outputs.version }}
@@ -115,7 +115,7 @@ jobs:
           - os: windows
             runner: windows-2022
           - os: linux
-            runner: ubuntu-20.04
+            runner: ubuntu-latest
         exclude:
           - os: windows
             base-image: debian-bullseye-slim
@@ -207,7 +207,7 @@ jobs:
 
   github-release:
     name: GitHub release
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     environment: publish-prod
     needs: preflight
     if: needs.preflight.outputs.skip-publishing == 'false' || ${{ inputs.dry-run }}
@@ -226,7 +226,11 @@ jobs:
         shell: pwsh
         run: |
           # workflow_call: The same artifacts persist across the entire run, so the PowerShell/DevolutionsGateway directory will still exist from the CI workflow
+          # FIXME: I suspect this line is no longer required.
           Remove-Item (Join-Path devolutions-gateway PowerShell DevolutionsGateway) -Recurse -ErrorAction Ignore
+
+          # Devolutions Agent on Linux does not have any useful feature yet, so we filter out the Linux artifacts.
+          Remove-Item (Join-Path devolutions-agent linux) -Recurse -ErrorAction Ignore
 
       - name: Create GitHub release
         shell: pwsh
@@ -259,7 +263,7 @@ jobs:
 
   psgallery-release:
     name: PowerShell release
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     environment: publish-prod
     needs: preflight
     if: needs.preflight.outputs.skip-publishing == 'false' || ${{ inputs.dry-run }}
@@ -305,7 +309,7 @@ jobs:
 
   onedrive-gateway:
     name: OneDrive (Devolutions Gateway)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     needs: preflight
     if: needs.preflight.outputs.skip-publishing == 'false' || ${{ inputs.dry-run }}
 
@@ -347,9 +351,8 @@ jobs:
 
           Move-Item -Path "./windows/x86_64/DevolutionsGateway-x86_64-${version}.msi" -Destination "$destinationFolder/DevolutionsGateway-x86_64-${versionFull}.msi"
           Move-Item -Path "./windows/x86_64/DevolutionsGateway_Windows_${version}_x86_64.pdb" -Destination "$destinationFolder/DevolutionsGateway-x86_64-${versionFull}.pdb"
-
-          # Note that at this point the deb package is already named using the ".0" suffix.
-          Move-Item -Path "./linux/x86_64/devolutions-gateway_${versionFull}_amd64.deb" -Destination "$destinationFolder/devolutions-gateway_${versionFull}_amd64.deb"
+          Move-Item -Path "./linux/x86_64/devolutions-gateway_${version}-1_amd64.deb" -Destination "$destinationFolder/devolutions-gateway_${versionFull}_amd64.deb"
+          Move-Item -Path "./linux/x86_64/devolutions-gateway_${version}-1_x86_64.rpm" -Destination "$destinationFolder/devolutions-gateway_${versionFull}_x86_64.rpm"
 
       - name: Upload to OneDrive
         uses: ./.github/workflows/onedrive-upload
@@ -364,7 +367,7 @@ jobs:
 
   onedrive-agent:
     name: OneDrive (Devolutions Agent)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     needs: preflight
     if: needs.preflight.outputs.skip-publishing == 'false' || ${{ inputs.dry-run }}
 
@@ -406,9 +409,8 @@ jobs:
 
           Move-Item -Path "./windows/x86_64/DevolutionsAgent-x86_64-${version}.msi" -Destination "$destinationFolder/DevolutionsAgent-x86_64-${versionFull}.msi"
           Move-Item -Path "./windows/x86_64/DevolutionsAgent-x86_64-${version}.symbols.zip" -Destination "$destinationFolder/DevolutionsAgent-x86_64-${versionFull}.symbols.zip"
-
-          # Note that at this point the deb package is already named using the ".0" suffix.
-          Move-Item -Path "./linux/x86_64/devolutions-agent_${versionFull}_amd64.deb" -Destination "$destinationFolder/devolutions-agent_${versionFull}_amd64.deb"
+          Move-Item -Path "./linux/x86_64/devolutions-agent_${version}-1_amd64.deb" -Destination "$destinationFolder/devolutions-agent_${versionFull}_amd64.deb"
+          Move-Item -Path "./linux/x86_64/devolutions-agent_${version}-1_x86_64.rpm" -Destination "$destinationFolder/devolutions-agent_${versionFull}_x86_64.rpm"
 
       - name: Upload to OneDrive
         uses: ./.github/workflows/onedrive-upload

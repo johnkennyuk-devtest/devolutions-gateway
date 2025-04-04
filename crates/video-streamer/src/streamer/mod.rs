@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
 use channel_writer::{ChannelWriter, ChannelWriterError, ChannelWriterReceiver};
+use ebml_iterable::error::CorruptedFileError;
 use futures_util::SinkExt;
 use iter::{IteratorError, WebmPositionedIterator};
 use protocol::{ProtocolCodeC, UserFriendlyError};
 use tag_writers::{EncodeWriterConfig, HeaderWriter, WriterResult};
-use tokio::sync::{mpsc, oneshot::error::RecvError, Mutex, Notify};
+use tokio::sync::oneshot::error::RecvError;
+use tokio::sync::{mpsc, Mutex, Notify};
 use tokio_util::codec::Framed;
 use tracing::Instrument;
-use webm_iterable::{
-    errors::{TagIteratorError, TagWriterError},
-    matroska_spec::{Master, MatroskaSpec},
-    WebmIterator,
-};
+use webm_iterable::errors::{TagIteratorError, TagWriterError};
+use webm_iterable::matroska_spec::{Master, MatroskaSpec};
+use webm_iterable::WebmIterator;
 
 pub(crate) mod block_tag;
 pub(crate) mod channel_writer;
@@ -22,7 +22,9 @@ pub(crate) mod reopenable_file;
 pub(crate) mod signal_writer;
 pub(crate) mod tag_writers;
 
-use crate::{reopenable::Reopenable, StreamingConfig};
+use crate::reopenable::Reopenable;
+use crate::StreamingConfig;
+use tokio::io::AsyncWriteExt;
 
 #[instrument(skip_all)]
 pub fn webm_stream(
@@ -56,7 +58,7 @@ pub fn webm_stream(
         }
     }
 
-    let cut_block_position = webm_itr.last_tag_position();
+    let cut_block_position = webm_itr.previous_emitted_tag_postion();
 
     let ws_frame = Framed::new(output_stream, ProtocolCodeC);
 
@@ -82,8 +84,8 @@ pub fn webm_stream(
         header_writer.write(header)?;
     }
 
-    let mut encode_writer = header_writer.into_encoded_writer(encode_writer_config)?;
-
+    let (mut encode_writer, cut_block_hit_marker) = header_writer.into_encoded_writer(encode_writer_config)?;
+    let mut cut_block_hit_marker = Some(cut_block_hit_marker);
     // Start muxing from the last key frame.
     // The WebM project requires the muxer to ensure the first Block/SimpleBlock is a keyframe.
     // However, the WebM file emitted by the CaptureStream API in Chrome does not adhere to this requirement.
@@ -96,13 +98,28 @@ pub fn webm_stream(
         }
     }
 
+    const MAX_RETRY_COUNT: usize = 3;
+    // To make sure we don't retry forever
+    // Retry is set to 0 when we successfully read a tag
+    let mut retry_count = 0;
+
     let result = loop {
         match webm_itr.next() {
             Some(Err(IteratorError::InnerError(TagIteratorError::ReadError { source }))) => {
                 return Err(source.into());
             }
-            Some(Err(IteratorError::InnerError(TagIteratorError::UnexpectedEOF { .. }))) | None => {
-                trace!("End of file reached, retrying");
+            Some(Err(IteratorError::InnerError(TagIteratorError::UnexpectedEOF { .. })))
+            // Sometimes the file is not corrupted, it's just that specific tag is still on the fly
+            | Some(Err(IteratorError::InnerError(TagIteratorError::CorruptedFileData(
+                CorruptedFileError::InvalidTagData { .. },
+            ))))
+            | None => {
+                trace!("End of file reached or invalid tag data hit, retrying");
+                if retry_count >= MAX_RETRY_COUNT {
+                    anyhow::bail!("reached max retry count, the webm iterator cannot proceed with the current streaming file");
+                }
+
+                retry_count += 1;
                 match when_eof(&when_new_chunk_appended, Arc::clone(&stop_notifier)) {
                     Ok(WhenEofControlFlow::Continue) => {
                         webm_itr.rollback_to_last_successful_tag()?;
@@ -118,8 +135,14 @@ pub fn webm_stream(
                 }
             }
             Some(Ok(tag)) => {
-                if webm_itr.last_tag_position() == cut_block_position {
-                    encode_writer.mark_cut_block_hit();
+                retry_count = 0;
+                if webm_itr.previous_emitted_tag_postion() == cut_block_position {
+                    if let Some(cut_block_hit_marker) = cut_block_hit_marker.take() {
+                        encode_writer.mark_cut_block_hit(cut_block_hit_marker);
+                    } else {
+                        error_sender.blocking_send(UserFriendlyError::UnexpectedError)?;
+                        anyhow::bail!("cut block hit twice");
+                    }
                 }
 
                 match encode_writer.write(tag) {
@@ -226,6 +249,7 @@ fn spawn_sending_task<W>(
                 },
             }
         }
+        let _ = ws_frame.lock().await.get_mut().shutdown().await;
         Ok::<_, anyhow::Error>(())
     });
 
@@ -249,6 +273,7 @@ fn spawn_sending_task<W>(
             }
         }
         info!("Stopping streaming task");
+        let _ = ws_frame_clone.lock().await.get_mut().shutdown().await;
         handle.abort();
         stop_notifier.notify_waiters();
         Ok::<_, anyhow::Error>(())

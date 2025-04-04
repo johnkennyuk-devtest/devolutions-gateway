@@ -13,15 +13,15 @@ use anyhow::bail;
 use uuid::Uuid;
 use windows::core::{Interface, PCSTR, PCWSTR, PSTR, PWSTR};
 use windows::Win32::Foundation::{
-    GetLastError, LocalFree, SetHandleInformation, E_INVALIDARG, E_POINTER, GENERIC_WRITE, HANDLE, HANDLE_FLAGS,
-    HANDLE_FLAG_INHERIT, HLOCAL, MAX_PATH, UNICODE_STRING,
+    LocalFree, SetHandleInformation, E_INVALIDARG, E_POINTER, GENERIC_WRITE, HANDLE, HANDLE_FLAGS, HANDLE_FLAG_INHERIT,
+    HLOCAL, MAX_PATH, UNICODE_STRING,
 };
 use windows::Win32::Security::{
     RevertToSelf, SecurityIdentification, TokenPrimary, TOKEN_ACCESS_MASK, TOKEN_ALL_ACCESS,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateDirectoryW, CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES,
-    FILE_FLAG_OVERLAPPED, FILE_SHARE_NONE, OPEN_EXISTING, PIPE_ACCESS_INBOUND,
+    CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_OVERLAPPED,
+    FILE_SHARE_NONE, OPEN_EXISTING, PIPE_ACCESS_INBOUND,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER, COINIT, COINIT_MULTITHREADED,
@@ -44,7 +44,7 @@ use windows::Win32::UI::Shell::{CommandLineToArgvW, IShellLinkW, ShellLink, SLGP
 
 use crate::handle::{Handle, HandleWrapper};
 use crate::process::Process;
-use crate::security::acl::{RawSecurityAttributes, SecurityAttributes};
+use crate::security::attributes::{SecurityAttributes, SecurityAttributesInit};
 use crate::thread::Thread;
 use crate::token::Token;
 use crate::Error;
@@ -604,29 +604,6 @@ impl Link {
     }
 }
 
-pub fn create_directory(path: &Path) -> Result<(), Error> {
-    let path = WideString::from(path);
-
-    // SAFETY: `path` is NUL terminated.
-    unsafe { CreateDirectoryW(path.as_pcwstr(), None) }?;
-
-    Ok(())
-}
-
-pub fn create_directory_with_security_attributes(
-    path: &Path,
-    security_attributes: &SecurityAttributes,
-) -> anyhow::Result<()> {
-    let path = WideString::from(path);
-
-    let security_attributes = RawSecurityAttributes::try_from(security_attributes)?;
-
-    // SAFETY: `path` is NUL terminated. We assume `security_attributes` is well constructed.
-    unsafe { CreateDirectoryW(path.as_pcwstr(), Some(security_attributes.as_raw())) }?;
-
-    Ok(())
-}
-
 pub struct Pipe {
     pub handle: Handle,
 }
@@ -636,17 +613,8 @@ impl Pipe {
     pub fn new_anonymous(security_attributes: Option<&SecurityAttributes>, size: u32) -> anyhow::Result<(Self, Self)> {
         let (mut rx, mut tx) = (HANDLE::default(), HANDLE::default());
 
-        let security_attributes = security_attributes.map(RawSecurityAttributes::try_from).transpose()?;
-
-        // SAFETY: No preconditions. `rx` and `tx` are valid out params.
-        unsafe {
-            CreatePipe(
-                &mut rx,
-                &mut tx,
-                security_attributes.as_ref().map(|x| x.as_raw() as *const _),
-                size,
-            )
-        }?;
+        // SAFETY: FFI call with no outstanding preconditions.
+        unsafe { CreatePipe(&mut rx, &mut tx, security_attributes.map(|x| x.as_ptr()), size) }?;
 
         // SAFETY: We created the resource above and are thus owning it.
         let rx = unsafe { Handle::new_owned(rx)? };
@@ -659,10 +627,11 @@ impl Pipe {
 
     /// Creates anonymous synchronous pipe for stdin.
     pub fn new_sync_stdin_redirection_pipe() -> anyhow::Result<(Self, Self)> {
-        let security_attributes = SecurityAttributes {
-            security_descriptor: None,
+        let security_attributes = SecurityAttributesInit {
             inherit_handle: true,
-        };
+            ..Default::default()
+        }
+        .init();
 
         let (read, write) = Self::new_anonymous(Some(&security_attributes), 0)?;
 
@@ -706,23 +675,22 @@ impl Pipe {
         // SAFETY: We created the resource above and are thus owning it.
         let handle = unsafe { Handle::new_owned(read_endpoint) }?;
 
-        // For some reason, `windows` crate do not return `Result` here, we should check for invalid
-        // handle manually.
+        // For some reason, `windows` crate do not return `Result` here, we need to check for validity manually.
         let read = if !read_endpoint.is_invalid() {
             // Take ownership
             Pipe { handle }
         } else {
-            // SAFETY: No preconditions.
-            let error = unsafe { GetLastError() };
-            return Err(anyhow::anyhow!(
-                "Failed to create named pipe `{pipe_name_str}`; Error: {error:?}"
-            ));
+            anyhow::bail!(
+                "failed to create named pipe `{pipe_name_str}`: {}",
+                windows::core::Error::from_win32()
+            );
         };
 
-        let security_attributes = RawSecurityAttributes::try_from(&SecurityAttributes {
-            security_descriptor: None,
+        let security_attributes = SecurityAttributesInit {
             inherit_handle: true,
-        })?;
+            ..Default::default()
+        }
+        .init();
 
         // SAFETY: Pipe is created above and is valid.
         let write_endpoint = unsafe {
@@ -730,7 +698,7 @@ impl Pipe {
                 pipe_name.as_pcwstr(),
                 GENERIC_WRITE.0,
                 FILE_SHARE_NONE,
-                Some(security_attributes.as_raw() as *const _),
+                Some(security_attributes.as_ptr()),
                 OPEN_EXISTING,
                 // Note that we are not setting FILE_FLAG_OVERLAPPED here, as we are not expecting async
                 // writes from target process stdout/stderr.
@@ -756,7 +724,7 @@ impl Pipe {
             .transpose()?
             .unwrap_or_default();
 
-        // SAFETY: No preconditions. The buffer is valid and its size is in bytes.
+        // SAFETY: FFI call with no outstanding preconditions.
         unsafe {
             PeekNamedPipe(
                 self.handle.raw(),
@@ -789,7 +757,7 @@ impl Pipe {
     pub fn client_process_id(&self) -> anyhow::Result<u32> {
         let mut pid = 0u32;
 
-        // SAFETY: Only precondition is for the handle to be created by `CreateNamedPipe`. Will fail otherwise.
+        // SAFETY: FFI call with no outstanding preconditions.
         unsafe { GetNamedPipeClientProcessId(self.handle.raw(), &mut pid) }?;
 
         Ok(pid)
@@ -800,7 +768,7 @@ impl Read for Pipe {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut read_bytes = 0;
 
-        // SAFETY: No preconditions. Will only fail if handle does not have GENERIC_READ.
+        // SAFETY: FFI call with no outstanding preconditions.
         unsafe {
             ReadFile(self.handle.raw(), Some(buf), Some(&mut read_bytes), None)?;
         }
@@ -813,7 +781,7 @@ impl Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut written_bytes = 0;
 
-        // SAFETY: No preconditions. Will only fail if handle does not have GENERIC_WRITE.
+        // SAFETY: FFI call with no outstanding preconditions.
         unsafe {
             WriteFile(self.handle.raw(), Some(buf), Some(&mut written_bytes), None)?;
         }
@@ -822,7 +790,7 @@ impl Write for Pipe {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // SAFETY: No preconditions. Will only fail if handle does not have GENERIC_WRITE.
+        // SAFETY: FFI call with no outstanding preconditions.
         unsafe {
             FlushFileBuffers(self.handle.raw())?;
         }
@@ -845,8 +813,9 @@ macro_rules! create_impersonation_context {
         }
 
         impl<'a> $name<'a> {
+            // TODO: rename to `new` or `impersonate`
             fn try_new(handle: &'a $underlying) -> anyhow::Result<Self> {
-                // SAFETY: No preconditions and handle is valid.
+                // SAFETY: FFI call with no outstanding preconditions.
                 unsafe { $impersonate(handle.handle().raw()) }?;
 
                 Ok(Self { _handle: handle })
@@ -855,8 +824,9 @@ macro_rules! create_impersonation_context {
 
         impl Drop for $name<'_> {
             fn drop(&mut self) {
-                // SAFETY: Must be called after a call to `ImpersonateNamedPipeClient` or friends.
-                // Panic on fail, or rest of code will run in context of user.
+                // SAFETY: FFI call with no outstanding preconditions.
+                // Should be called after impersonation using, e.g.: ImpersonateNamedPipeClient.
+                // The impersonation function is called in the constructor.
                 if unsafe { RevertToSelf() }.is_err() {
                     panic!("failed to revert to context of current thread");
                 }

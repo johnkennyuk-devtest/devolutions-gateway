@@ -1,0 +1,14 @@
+#!/bin/sh
+
+set -e
+
+action="$1"
+
+# Only do complete clean-up on purge.
+if [ "$action" != "purge" ] ; then
+  exit 0
+fi
+
+if [ -d /etc/devolutions-gateway ]; then
+  rm -rf /etc/devolutions-gateway
+fi

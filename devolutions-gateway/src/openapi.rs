@@ -3,6 +3,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 use uuid::Uuid;
 
+use crate::api::preflight::PreflightAlertStatus;
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -23,6 +25,7 @@ use uuid::Uuid;
         crate::api::webapp::sign_app_token,
         crate::api::webapp::sign_session_token,
         crate::api::update::trigger_update_check,
+        crate::api::preflight::post_preflight,
         // crate::api::net::get_net_config,
     ),
     components(schemas(
@@ -44,6 +47,13 @@ use uuid::Uuid;
         crate::api::webapp::AppTokenSignRequest,
         crate::api::webapp::AppTokenContentType,
         crate::api::update::UpdateResponse,
+        PreflightOperation,
+        PreflightOperationKind,
+        Credentials,
+        CredentialsKind,
+        PreflightOutput,
+        PreflightOutputKind,
+        PreflightAlertStatus,
         // crate::api::net::NetworkInterface,
         SessionTokenContentType,
         SessionTokenSignRequest,
@@ -183,35 +193,35 @@ struct SubscriberSessionInfo {
     start_timestamp: OffsetDateTime,
 }
 
-/// Event type for messages
+/// Event type for messages.
 #[allow(unused)]
 #[derive(utoipa::ToSchema, Serialize)]
 #[allow(clippy::enum_variant_names)]
 enum SubscriberMessageKind {
-    /// A new session started
+    /// A new session started.
     #[serde(rename = "session.started")]
     SessionStarted,
-    /// A session terminated
+    /// A session terminated.
     #[serde(rename = "session.ended")]
     SessionEnded,
-    /// Periodic running session listing
+    /// Periodic running session listing.
     #[serde(rename = "session.list")]
     SessionList,
 }
 
-/// Message produced on various Gateway events
+/// Message produced on various Gateway events.
 #[derive(utoipa::ToSchema, Serialize)]
 struct SubscriberMessage {
-    /// Name of the event type associated to this message
+    /// Name of the event type associated to this message.
     ///
     /// Presence or absence of additionnal fields depends on the value of this field.
     kind: SubscriberMessageKind,
-    /// Date and time this message was produced
+    /// Date and time this message was produced.
     #[serde(with = "time::serde::rfc3339")]
     timestamp: OffsetDateTime,
-    /// Session information associated to this event
+    /// Session information associated to this event.
     session: Option<SubscriberSessionInfo>,
-    /// Session list associated to this event
+    /// Session list associated to this event.
     session_list: Option<Vec<SubscriberSessionInfo>>,
 }
 
@@ -226,13 +236,13 @@ enum SessionTokenContentType {
 
 #[derive(Serialize, utoipa::ToSchema)]
 struct SessionTokenSignRequest {
-    /// The content type for the session token
+    /// The content type for the session token.
     content_type: SessionTokenContentType,
-    /// Protocol for the session (e.g.: "rdp")
+    /// Protocol for the session (e.g.: "rdp").
     protocol: Option<String>,
-    /// Destination host
+    /// Destination host.
     destination: Option<String>,
-    /// Unique ID for this session
+    /// Unique ID for this session.
     session_id: Option<Uuid>,
     /// Kerberos realm.
     ///
@@ -288,3 +298,140 @@ impl Modify for SubscriberSecurityAddon {
     security(("subscriber_token" = [])),
 )]
 fn post_subscriber_message() {}
+
+#[allow(unused)]
+#[derive(Deserialize, utoipa::ToSchema)]
+struct PreflightOperation {
+    /// Unique ID identifying the preflight operation.
+    id: Uuid,
+    /// The type of preflight operation to perform.
+    kind: PreflightOperationKind,
+    /// The token to be pushed on the proxy-side.
+    ///
+    /// Required for "push-token" kind.
+    token: Option<String>,
+    /// A unique ID identifying the session for which the credentials should be used.
+    ///
+    /// Required for "push-credentials" kind.
+    association_id: Option<Uuid>,
+    /// The credentials to use to authorize the client at the proxy-level.
+    ///
+    /// Required for "push-credentials" kind.
+    proxy_credentials: Option<Credentials>,
+    /// The credentials to use against the target server.
+    ///
+    /// Required for "push-credentials" kind.
+    target_credentials: Option<Credentials>,
+    /// The hostname to perform DNS lookup on.
+    ///
+    /// Required for "lookup-host" kind.
+    host_to_lookup: Option<String>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+enum PreflightOperationKind {
+    #[serde(rename = "get-version")]
+    GetVersion,
+    #[serde(rename = "get-agent-version")]
+    GetAgentVersion,
+    #[serde(rename = "get-running-session-count")]
+    GetRunningSessionCount,
+    #[serde(rename = "get-recording-storage-health")]
+    GetRecordingStorageHealth,
+    #[serde(rename = "push-token")]
+    PushToken,
+    #[serde(rename = "push-credentials")]
+    PushCredentials,
+    #[serde(rename = "lookup-host")]
+    LookupHost,
+}
+
+#[allow(unused)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Deserialize)]
+struct Credentials {
+    /// The kind of credentials.
+    kind: CredentialsKind,
+    /// Username for the credentials.
+    ///
+    /// Required for "username-password" kind.
+    username: Option<String>,
+    /// Password for the credentials.
+    ///
+    /// Required for "username-password" kind.
+    password: Option<String>,
+}
+
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Deserialize)]
+enum CredentialsKind {
+    #[serde(rename = "username-password")]
+    UsernamePassword,
+}
+
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Serialize)]
+pub(crate) struct PreflightOutput {
+    /// The ID of the preflight operation associated to this result.
+    operation_id: Uuid,
+    /// The type of preflight result.
+    kind: PreflightOutputKind,
+    /// Service version.
+    ///
+    /// Set for "version" kind.
+    version: Option<String>,
+    /// Agent service version, if installed.
+    ///
+    /// Set for "agent-version" kind.
+    agent_version: Option<String>,
+    /// Number of running sessions.
+    ///
+    /// Set for "running-session-count" kind.
+    running_session_count: Option<usize>,
+    /// Whether the recording storage is writeable or not.
+    ///
+    /// Set for "recording-storage-health" kind.
+    recording_storage_is_writeable: Option<bool>,
+    /// The total space of the disk used to store recordings, in bytes.
+    ///
+    /// Set for "recording-storage-health" kind.
+    recording_storage_total_space: Option<u64>,
+    /// The remaining available space to store recordings, in bytes.
+    ///
+    /// set for "recording-storage-health" kind.
+    recording_storage_available_space: Option<u64>,
+    /// Hostname that was resolved.
+    ///
+    /// Set for "resolved-host" kind.
+    resolved_host: Option<String>,
+    /// Resolved IP addresses.
+    ///
+    /// Set for "resolved-host" kind.
+    resolved_addresses: Option<Vec<String>>,
+    /// Alert status.
+    ///
+    /// Set for "alert" kind.
+    alert_status: Option<PreflightAlertStatus>,
+    /// Message describing the problem.
+    ///
+    /// Set for "alert" kind.
+    alert_message: Option<String>,
+}
+
+#[allow(unused)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Serialize)]
+pub(crate) enum PreflightOutputKind {
+    #[serde(rename = "version")]
+    Version,
+    #[serde(rename = "agent-version")]
+    AgentVersion,
+    #[serde(rename = "running-session-count")]
+    RunningSessionCount,
+    #[serde(rename = "recording-storage-health")]
+    RecordingStorageHealth,
+    #[serde(rename = "resolved-host")]
+    ResolvedHost,
+    #[serde(rename = "alert")]
+    Alert,
+}

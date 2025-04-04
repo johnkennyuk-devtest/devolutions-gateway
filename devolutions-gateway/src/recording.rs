@@ -103,8 +103,6 @@ where
 
         #[cfg(windows)]
         {
-            use std::os::windows::fs::OpenOptionsExt as _;
-
             const FILE_SHARE_READ: u32 = 1;
 
             open_options.share_mode(FILE_SHARE_READ);
@@ -596,7 +594,7 @@ impl RecordingManagerTask {
 
             // Notify all the streamers that recording has ended.
             if let Some(notify) = self.recording_end_notifier.get(&id) {
-                notify.notify_one();
+                notify.notify_waiters();
             }
 
             info!(%id, "Start video remuxing operation");

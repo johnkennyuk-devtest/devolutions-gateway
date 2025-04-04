@@ -27,6 +27,14 @@
           "text": "Install the Devolutions Agent service"
         },
         {
+          "id": "FeatureAgentUpdaterName",
+          "text": "Devolutions Gateway Updater"
+        },
+        {
+          "id": "FeatureAgentUpdaterDescription",
+          "text": "Enable the Devolutions Gateway updater"
+        },
+        {
           "id": "FeaturePedmName",
           "text": "Devolutions PEDM"
         },
@@ -99,6 +107,10 @@
         {
           "id": "UACPromptLabel",
           "text": "Please wait for UAC prompt to appear.\n\nIf it appears minimized then active it from the taskbar."
+        },
+        {
+          "id": "ExperimentalLabel",
+          "text": "Experimental"
         }
       ],
       "filters": [

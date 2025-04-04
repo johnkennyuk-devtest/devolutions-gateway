@@ -33,6 +33,14 @@ namespace DevolutionsAgent.Resources
 		/// </summary>
 		public const string FeatureAgentDescription = "FeatureAgentDescription";		
 		/// <summary>
+		/// Devolutions Gateway Updater
+		/// </summary>
+		public const string FeatureAgentUpdaterName = "FeatureAgentUpdaterName";		
+		/// <summary>
+		/// Enable the Devolutions Gateway updater
+		/// </summary>
+		public const string FeatureAgentUpdaterDescription = "FeatureAgentUpdaterDescription";		
+		/// <summary>
 		/// Devolutions PEDM
 		/// </summary>
 		public const string FeaturePedmName = "FeaturePedmName";		
@@ -96,6 +104,10 @@ namespace DevolutionsAgent.Resources
 		/// Please wait for UAC prompt to appear.If it appears minimized then active it from the taskbar.
 		/// </summary>
 		public const string UACPromptLabel = "UACPromptLabel";		
+		/// <summary>
+		/// Experimental
+		/// </summary>
+		public const string ExperimentalLabel = "ExperimentalLabel";		
 		/// <summary>
 		/// All Files
 		/// </summary>

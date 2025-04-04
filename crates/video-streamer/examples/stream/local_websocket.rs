@@ -1,20 +1,14 @@
-use axum::{
-    extract::ws::{self, WebSocket, WebSocketUpgrade},
-    routing::get,
-    Router,
-};
-use futures::{stream::StreamExt, SinkExt};
-use std::{
-    io::{Error as IoError, ErrorKind},
-    sync::{Arc, Mutex},
-};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::{TcpListener, TcpStream},
-};
-use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message as TungsteniteMessage, MaybeTlsStream, WebSocketStream,
-};
+use axum::extract::ws::{self, WebSocket, WebSocketUpgrade};
+use axum::routing::get;
+use axum::Router;
+use futures::stream::StreamExt;
+use futures::SinkExt;
+use std::io::{Error as IoError, ErrorKind};
+use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tracing::info;
 
 pub(crate) struct WebSocketClient {
@@ -96,13 +90,17 @@ pub(crate) async fn create_local_websocket() -> (WebSocketClient, impl AsyncRead
 
 fn websocket_compat(ws: WebSocket) -> impl AsyncRead + AsyncWrite + Unpin + Send + 'static {
     let ws_compat = ws
-        .map(|item| {
-            item.map(|msg| match msg {
-                ws::Message::Text(s) => transport::WsMessage::Payload(s.into_bytes()),
-                ws::Message::Binary(data) => transport::WsMessage::Payload(data),
-                ws::Message::Ping(_) | ws::Message::Pong(_) => transport::WsMessage::Ignored,
-                ws::Message::Close(_) => transport::WsMessage::Close,
-            })
+        .filter_map(|item| {
+            let mapped = item
+                .map(|msg| match msg {
+                    ws::Message::Text(s) => Some(transport::WsReadMsg::Payload(s.into_bytes())),
+                    ws::Message::Binary(data) => Some(transport::WsReadMsg::Payload(data)),
+                    ws::Message::Ping(_) | ws::Message::Pong(_) => None,
+                    ws::Message::Close(_) => Some(transport::WsReadMsg::Close),
+                })
+                .transpose();
+
+            core::future::ready(mapped)
         })
         .with(|item| futures::future::ready(Ok::<_, axum::Error>(ws::Message::Binary(item))));
 

@@ -1,6 +1,7 @@
 import '../../../shadow-player/src/streamer';
 import { ShadowPlayer } from '../../../shadow-player/src/streamer';
 import { GatewayAccessApi } from '../gateway';
+import { t } from '../i18n';
 import { showNotification } from '../notification';
 
 export async function handleWebm(gatewayAccessApi: GatewayAccessApi) {
@@ -20,12 +21,10 @@ export async function handleWebm(gatewayAccessApi: GatewayAccessApi) {
   shadowPlayer.srcChange(gatewayAccessApi.sessionShadowingUrl());
   shadowPlayer.play();
 
-  shadowPlayer.onEnd(() => {
-    showNotification('Playback has ended', 'success');
-  });
-
   shadowPlayer.onError((error) => {
-    showNotification(`An error occurred: ${error}`, 'error');
+    if (error.type === 'protocol') {
+      showNotification(t('notifications.protocolError', { error: error.inner.error }), 'error');
+    }
   });
 
   return shadowPlayer;

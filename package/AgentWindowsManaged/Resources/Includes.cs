@@ -18,19 +18,19 @@ namespace DevolutionsAgent.Resources
 
         internal static string EXECUTABLE_NAME = "DevolutionsAgent.exe";
 
+        internal static string DESKTOP_EXECUTABLE_NAME = "DevolutionsDesktopAgent.exe";
+
         internal static string EMAIL_SUPPORT = "support@devolutions.net";
 
         internal static string FORUM_SUPPORT = "forum.devolutions.net";
 
+        internal static string SHELL_EXT_BINARY_NAME = "DevolutionsPedmShellExt.dll";
+
+        internal static Guid SHELL_EXT_CSLID = new("0BA604FD-4A5A-4ABB-92B1-09AC5C3BF356");
+
         internal static Guid UPGRADE_CODE = new("82318d3c-811f-4d5d-9a82-b7c31b076755");
 
         internal static string INFO_URL = "https://server.devolutions.net";
-
-        internal static Feature AGENT_FEATURE = new("!(loc.FeatureAgentName)", true, false) { Id = "F.Agent", Description = "!(loc.FeatureAgentDescription)" };
-
-        internal static Feature PEDM_FEATURE = new("!(loc.FeaturePedmName)", "!(loc.FeaturePedmDescription)", false) { Id = "F.Pedm" };
-
-        internal static Feature SESSION_FEATURE = new("!(loc.FeatureSessionName)", "!(loc.FeatureSessionDescription)", false) { Id = "F.Session" };
 
         /// <summary>
         /// SDDL string representing desired %programdata%\devolutions\agent ACL

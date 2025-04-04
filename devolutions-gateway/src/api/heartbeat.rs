@@ -10,16 +10,16 @@ use devolutions_agent_shared::get_installed_agent_version;
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Serialize)]
 pub(crate) struct Heartbeat {
-    /// This Gateway's unique ID
+    /// This Gateway's unique ID.
     id: Option<Uuid>,
-    /// This Gateway's hostname
+    /// This Gateway's hostname.
     hostname: String,
-    /// Gateway service version
+    /// Gateway service version.
     version: &'static str,
-    /// Agent version, if installed
+    /// Agent version, if installed.
     #[serde(skip_serializing_if = "Option::is_none")]
     agent_version: Option<String>,
-    /// Number of running sessions
+    /// Number of running sessions.
     running_session_count: usize,
     /// Whether the recording storage is writeable or not.
     ///
@@ -58,8 +58,6 @@ pub(super) async fn get_heartbeat(
     }): State<DgwState>,
     _scope: HeartbeatReadScope,
 ) -> Result<Json<Heartbeat>, HttpError> {
-    use sysinfo::Disks;
-
     let conf = conf_handle.get_conf();
 
     let running_session_count = sessions
@@ -67,8 +65,40 @@ pub(super) async fn get_heartbeat(
         .await
         .map_err(HttpError::internal().err())?;
 
+    let recording_storage_result = recording_storage_health(conf.recording_path.as_std_path());
+
+    let agent_version = match get_installed_agent_version() {
+        Ok(Some(version)) => Some(version.fmt_without_revision()),
+        Ok(None) => None,
+        Err(error) => {
+            warn!(error = %error, "Failed to get Agent version");
+            None
+        }
+    };
+
+    Ok(Json(Heartbeat {
+        id: conf.id,
+        hostname: conf.hostname.clone(),
+        version: env!("CARGO_PKG_VERSION"),
+        agent_version,
+        running_session_count,
+        recording_storage_is_writeable: recording_storage_result.recording_storage_is_writeable,
+        recording_storage_total_space: recording_storage_result.recording_storage_total_space,
+        recording_storage_available_space: recording_storage_result.recording_storage_available_space,
+    }))
+}
+
+pub(crate) struct RecordingStorageResult {
+    pub(crate) recording_storage_is_writeable: bool,
+    pub(crate) recording_storage_total_space: Option<u64>,
+    pub(crate) recording_storage_available_space: Option<u64>,
+}
+
+pub(crate) fn recording_storage_health(recording_path: &std::path::Path) -> RecordingStorageResult {
+    use sysinfo::Disks;
+
     let recording_storage_is_writeable = {
-        let probe_file = conf.recording_path.join("probe");
+        let probe_file = recording_path.join("probe");
 
         let is_ok = std::fs::write(&probe_file, ".").is_ok();
 
@@ -82,8 +112,11 @@ pub(super) async fn get_heartbeat(
     let (recording_storage_total_space, recording_storage_available_space) = if sysinfo::IS_SUPPORTED_SYSTEM {
         trace!("System is supporting listing storage disks");
 
-        let recording_path = dunce::canonicalize(&conf.recording_path)
-            .unwrap_or_else(|_| conf.recording_path.clone().into_std_path_buf());
+        let recording_path = dunce::canonicalize(recording_path)
+            .inspect_err(
+                |error| debug!(%error, recording_path = %recording_path.display(), "Failed to canonicalize recording path"),
+            )
+            .unwrap_or_else(|_| recording_path.to_owned());
 
         let disks = Disks::new_with_refreshed_list();
 
@@ -117,23 +150,9 @@ pub(super) async fn get_heartbeat(
         (None, None)
     };
 
-    let agent_version = match get_installed_agent_version() {
-        Ok(Some(version)) => Some(version.fmt_without_revision()),
-        Ok(None) => None,
-        Err(error) => {
-            warn!(error = %error, "Failed to get Agent version");
-            None
-        }
-    };
-
-    Ok(Json(Heartbeat {
-        id: conf.id,
-        hostname: conf.hostname.clone(),
-        version: env!("CARGO_PKG_VERSION"),
-        agent_version,
-        running_session_count,
+    RecordingStorageResult {
         recording_storage_is_writeable,
         recording_storage_total_space,
         recording_storage_available_space,
-    }))
+    }
 }

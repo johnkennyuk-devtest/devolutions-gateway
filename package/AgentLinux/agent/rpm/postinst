@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# System-wide package configuration.
+DEFAULTS_FILE="/etc/default/devolutions-agent"
+
+if [ ! -d /etc/devolutions-agent ]; then
+	/bin/mkdir /etc/devolutions-agent
+	/bin/chmod 655 /etc/devolutions-agent
+fi

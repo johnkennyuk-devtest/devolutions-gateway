@@ -14,25 +14,23 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
+use devolutions_agent_shared::{get_updater_file_path, DateVersion, UpdateJson, VersionSpecification};
+use devolutions_gateway_task::{ShutdownSignal, Task};
 use notify_debouncer_mini::notify::RecursiveMode;
 use tokio::fs;
 use uuid::Uuid;
 
-use devolutions_agent_shared::{get_updater_file_path, DateVersion, UpdateJson, VersionSpecification};
-use devolutions_gateway_task::{ShutdownSignal, Task};
-
+use self::detect::get_product_code;
+use self::integrity::validate_artifact_hash;
+use self::io::{download_binary, download_utf8, save_to_temp_file};
+use self::package::{install_package, uninstall_package, validate_package};
+use self::product_actions::{build_product_actions, ProductUpdateActions};
+use self::productinfo::DEVOLUTIONS_PRODUCTINFO_URL;
+use self::security::set_file_dacl;
 use crate::config::ConfHandle;
 
-use integrity::validate_artifact_hash;
-use io::{download_binary, download_utf8, save_to_temp_file};
-use package::{install_package, uninstall_package, validate_package};
-use product_actions::{build_product_actions, ProductUpdateActions};
-use productinfo::DEVOLUTIONS_PRODUCTINFO_URL;
-use security::set_file_dacl;
-
-use detect::get_product_code;
-pub(crate) use error::UpdaterError;
-pub(crate) use product::Product;
+pub(crate) use self::error::UpdaterError;
+pub(crate) use self::product::Product;
 
 const UPDATE_JSON_WATCH_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -58,12 +56,12 @@ struct UpdateOrder {
     hash: Option<String>,
 }
 
-pub(crate) struct UpdaterTask {
+pub struct UpdaterTask {
     conf_handle: ConfHandle,
 }
 
 impl UpdaterTask {
-    pub(crate) fn new(conf_handle: ConfHandle) -> Self {
+    pub fn new(conf_handle: ConfHandle) -> Self {
         Self { conf_handle }
     }
 }
@@ -278,31 +276,25 @@ async fn check_for_updates(product: Product, update_json: &UpdateJson) -> anyhow
             }))
         }
         VersionSpecification::Specific(version) => {
-            if version == remote_version {
-                // Product info DB version matches the requested version, proceed with update.
-                return Ok(Some(UpdateOrder {
-                    target_version: version,
-                    downgrade: None,
-                    package_url: product_info.url.clone(),
-                    hash: product_info.hash.clone(),
-                }));
-            }
-
             // If the target version is not available on devolutions.net, try to guess the requested
             // version MSI URL by modifying the detected version.
             //
             // TODO(@pacmancoder): This is a temporary workaround until we have improved productinfo
             // database with multiple version information.
-            let modified_url = try_modify_product_url_version(&product_info.url, remote_version, version)?;
+            let package_url = if version == remote_version {
+                product_info.url.clone()
+            } else {
+                try_modify_product_url_version(&product_info.url, remote_version, version)?
+            };
 
-            // Quick check if the modified URL points to existing resource.
-            let response = reqwest::Client::builder().build()?.head(&modified_url).send().await?;
+            // Quick check if the package URL points to existing resource.
+            let response = reqwest::Client::builder().build()?.head(&package_url).send().await?;
             if let Err(error) = response.error_for_status() {
                 warn!(
                     %error,
                     %product,
                     %version,
-                    %modified_url,
+                    %package_url,
                     "Failed to access the product URL, skipping update"
                 );
                 return Ok(None);
@@ -326,7 +318,7 @@ async fn check_for_updates(product: Product, update_json: &UpdateJson) -> anyhow
             Ok(Some(UpdateOrder {
                 target_version: version,
                 downgrade,
-                package_url: modified_url,
+                package_url,
                 hash: None,
             }))
         }

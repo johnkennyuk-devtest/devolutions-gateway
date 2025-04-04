@@ -9,6 +9,9 @@ if ($IsWindows) {
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12;
 }
 
+# load New-UpstreamChangelog
+. (Join-Path $PSScriptRoot "linux-changelog.ps1")
+
 function Get-DotEnvFile {
     param(
         [Parameter(Position=0,Mandatory=$true)]
@@ -431,19 +434,6 @@ class TlkRecipe
         }
 
         if ($this.Product -Eq "agent" -And $this.Target.IsWindows()) {
-            if (Test-Path Env:DAGENT_DESKTOP_AGENT_OUTPUT_PATH) {
-                & './dotnet/DesktopAgent/build.ps1' | Out-Host
-                $DesktopAgentOutputPath = $Env:DAGENT_DESKTOP_AGENT_OUTPUT_PATH
-                Remove-Item -Path "$DesktopAgentOutputPath" -Recurse -Force -ErrorAction SilentlyContinue
-                New-Item -Path "$DesktopAgentOutputPath" -ItemType 'Directory' -Force | Out-Null
-
-                $BuiltDesktop = Get-ChildItem -Path "./dotnet/DesktopAgent/bin/Release/net48/*" -Recurse -Include *.dll,*.exe,*.pdb
-
-                foreach ($File in $BuiltDesktop) {
-                    Copy-Item $File.FullName -Destination $DesktopAgentOutputPath
-                }
-            }
-
             if (Test-Path Env:DAGENT_SESSION_EXECUTABLE) {
                 $sessionExe = Get-ChildItem -Recurse -Include 'devolutions-session.exe' | Select-Object -First 1
 
@@ -642,26 +632,20 @@ class TlkRecipe
         $DebianArchitecture = $this.Target.DebianArchitecture()
         $RpmArchitecture = $this.Target.Architecture
 
-        $Packager = "Devolutions Inc."
-        $Email = "support@devolutions.net"
+        $Packager = "Benoît Cortier"
+        $Email = "bcortier@devolutions.net"
         $Website = "https://devolutions.net"
         $PackageVersion = $this.Version
         $DistroCodeName = "focal" # Ubuntu 20.04
-        $Dependencies = @('liblzma5', 'liblz4-1')
-
-        if ($this.Target.DebianArchitecture() -Eq 'arm64') {
-            $Dependencies += @("libc6 (>= 2.29)", "libgcc-s1 (>= 4.2)")
-        } else {
-            $Dependencies += @('${shlibs:Depends}', '${misc:Depends}')
-        }
+        $Dependencies = @('libc6 (>= 2.31)')
 
         $Env:DEBFULLNAME = $Packager
         $Env:DEBEMAIL = $Email
 
         $Executable = $null
-        $DGatewayWebClient = $null
-        $DGatewayWebPlayer = $null
-        $DGatewayLibXmf = $null
+        $DGatewayWebClient = $null  # path to the webapp client directory
+        $DGatewayWebPlayer = $null  # path to the webapp player directory
+        $DGatewayLibXmf = $null  # path to libxmf.so
 
         switch ($this.Product) {
             "gateway" {
@@ -724,7 +708,8 @@ class TlkRecipe
         Set-Location $OutputPackagePath
 
         $PkgName = "devolutions-$($this.Product)"
-        $PkgNameVersion = "${PkgName}_$($this.Version).0"
+        $PkgVersion = "$($this.Version)-1"
+        $PkgNameVersion = "${PkgName}_${PkgVersion}"
         $DebPkgNameTarget = "${PkgNameVersion}_${DebianArchitecture}"
         $RpmPkgNameTarget = "${PkgNameVersion}_${RpmArchitecture}"
         $CopyrightFile = Join-Path $InputPackagePath "$($this.Product)/copyright"
@@ -741,9 +726,6 @@ class TlkRecipe
         # debian/docs
         Set-Content -Path "$OutputDebianPath/docs" -Value ""
 
-        # debian/compat
-        Set-Content -Path "$OutputDebianPath/compat" -Value "9"
-
         # debian/README.debian
         Remove-Item -Path "$OutputDebianPath/README.debian" -ErrorAction 'SilentlyContinue'
 
@@ -756,25 +738,12 @@ class TlkRecipe
             $DhShLibDepsOverride = "dh_shlibdeps"
         }
 
-        switch ($this.Product) {
-            "gateway" {
-                Merge-Tokens -TemplateFile $RulesTemplate -Tokens @{
-                    executable = $Executable
-                    dgateway_webclient = $DGatewayWebClient
-                    dgateway_webplayer = $DGatewayWebPlayer
-                    dgateway_libxmf = $DGatewayLibXmf
-                    platform_dir = $InputPackagePath
-                    dh_shlibdeps = $DhShLibDepsOverride
-                } -OutputFile $RulesFile
-            }
-            "agent" {
-                Merge-Tokens -TemplateFile $RulesTemplate -Tokens @{
-                    executable = $Executable
-                    platform_dir = $InputPackagePath
-                    dh_shlibdeps = $DhShLibDepsOverride
-                } -OutputFile $RulesFile
-            }
-        }
+        $DebUpstreamChangelogFile = Join-Path $OutputPath "changelog_deb_upstream"
+        
+        Merge-Tokens -TemplateFile $RulesTemplate -Tokens @{
+            dh_shlibdeps = $DhShLibDepsOverride
+            upstream_changelog = $DebUpstreamChangelogFile
+        } -OutputFile $RulesFile
 
         # debian/control
         $ControlFile = Join-Path $OutputDebianPath "control"
@@ -788,38 +757,71 @@ class TlkRecipe
             description = $Description
         } -OutputFile $ControlFile
 
+        # This directory contains the copyright and changelog templates for both Gateway and Agent.
+        # Only the package name will differ.
+        $RequiredFilesDir = Join-Path $this.sourcePath "package/Linux/template"
+
         # debian/copyright
         $CopyrightFile = Join-Path $OutputDebianPath "copyright"
-        $CopyrightTemplate = Join-Path $InputPackagePath "template/copyright"
+        $CopyrightTemplate = Join-Path $RequiredFilesDir "copyright"
 
         Merge-Tokens -TemplateFile $CopyrightTemplate -Tokens @{
             package = $PkgName
             packager = $Packager
             year = $(Get-Date).Year
+            $PkgNameVersion = "${PkgName}_$($this.Version)-1"
             website = $Website
         } -OutputFile $CopyrightFile
 
-        # debian/changelog
-        $ChangelogFile = Join-Path $OutputDebianPath "changelog"
-        $ChangelogTemplate = Join-Path $InputPackagePath "template/changelog"
+        # input for upstream is the root CHANGELOG.md
+        $UpstreamChangelogFile = Join-Path $this.SourcePath "CHANGELOG.md"
 
-        Merge-Tokens -TemplateFile $ChangelogTemplate -Tokens @{
-            package = $PkgName
-            distro = $DistroCodeName
-            email = $Email
-            packager = $Packager
-            version = "${PackageVersion}.0"
-            date = $($(Get-Date -UFormat "%a, %d %b %Y %H:%M:%S %Z00") -Replace '\.','')
-        } -OutputFile $ChangelogFile
+        # input for debian/changelog is the package-specific CHANGELOG.md
+        $PackagingChangelogFile = Join-Path $InputPackagePath "CHANGELOG.md"
+        
+        $s = New-Changelog `
+        -Format 'Deb' `
+        -InputFile $UpstreamChangelogFile `
+        -Packager $Packager `
+        -Email $Email `
+        -PackageName $PkgName `
+        -Distro $DistroCodeName
+        Set-Content -Path $DebUpstreamChangelogFile -Value $s
+
+        # used by dh_make for the package
+        $DebPackagingChangelogFile = Join-Path $OutputDebianPath "changelog"
+        $s = New-Changelog `
+        -Format 'Deb' `
+        -InputFile $PackagingChangelogFile `
+        -Packager $Packager `
+        -Email $Email `
+        -PackageName $PkgName `
+        -Distro $DistroCodeName
+        Set-Content -Path $DebPackagingChangelogFile -Value $s
 
         $ScriptPath = Join-Path $InputPackagePath "$($this.Product)/debian"
         $PostInstFile = Join-Path $ScriptPath 'postinst'
-        $PreRmFile = Join-Path $ScriptPath 'prerm'
-        $PostRmFile = Join-Path $ScriptPath 'postrm'
-        
-        @($PostInstFile, $PreRmFile, $PostRmFile) | % {
-            $OutputFile = Join-Path $OutputDebianPath (Split-Path $_ -Leaf)
-            Copy-Item $_ $OutputFile
+
+        # Copy to output/product/debian
+        Copy-Item $PostInstFile $OutputDebianPath -Force
+        Copy-Item "$ScriptPath/install" $OutputDebianPath -Force
+
+        # Copy to output/product
+        $binName = switch ($this.Product) {
+            "gateway" { "devolutions-gateway" }
+            "agent" { "devolutions-agent" }
+        }
+
+        Copy-Item $Executable "$OutputPackagePath/$binName" -Force
+
+        if ($this.Product -eq "gateway") {
+            # Copy to output/gateway/debian
+            Copy-Item "$ScriptPath/service" $OutputDebianPath -Force
+
+            # Copy to output/gateway
+            Copy-Item $DGatewayWebClient "$OutputPackagePath/client" -Recurse -Force
+            Copy-Item $DGatewayWebPlayer "$OutputPackagePath/player" -Recurse -Force
+            Copy-Item $DGatewayLibXmf "$OutputPackagePath/libxmf.so" -Force
         }
 
         $DpkgBuildPackageArgs = @('-b', '-us', '-uc')
@@ -830,35 +832,39 @@ class TlkRecipe
 
         # Disable dpkg-buildpackage stripping as the binary is already stripped.
         $Env:DEB_BUILD_OPTIONS = "nostrip"
+
         & 'dpkg-buildpackage' $DpkgBuildPackageArgs | Out-Host
 
+        $RpmUpstreamChangelogFile = Join-Path $OutputPath "changelog_rpm_upstream"
+        $s = New-Changelog -Format 'RpmUpstream' -InputFile $UpstreamChangelogFile -Packager $Packager -Email $Email
+        Set-Content -Path $RpmUpstreamChangelogFile -Value $s
+
+        $RpmPackagingChangelogFile = Join-Path $OutputPath "changelog_rpm_packaging"
+        $s = New-Changelog -Format 'RpmPackaging' -InputFile $UpstreamChangelogFile -Packager $Packager -Email $Email
+        Set-Content -Path $RpmPackagingChangelogFile -Value $s
+
         $FpmArgs = @(
-            '--force',
-            '-s', 'dir',
-            '-t', 'rpm',
-            '-p', "$OutputPath/${RpmPkgNameTarget}.rpm",
-            '-n', $PkgName,
-            '-v', $PackageVersion,
-            '--maintainer', "$Packager <$Email>",
-            '--description', $Description,
-            '--url', $Website,
+            '--force'
+            '--verbose'
+            '-s', 'dir'
+            '-t', 'rpm'
+            '-p', "$OutputPath/${RpmPkgNameTarget}.rpm"
+            '-n', $PkgName
+            '-v', $PackageVersion
+            '-d', 'glibc'
+            '--maintainer', "$Packager <$Email>"
+            '--description', $Description
+            '--url', $Website
             '--license', 'Apache-2.0 OR MIT'
             '--rpm-attr', "755,root,root:/usr/bin/$PkgName"
-        )
-
-        if ($this.Product -eq "gateway") {
-            $FpmArgs += @(
-                '--after-install', $PostInstFile,
-                '--before-remove', $PreRmFile,
-                '--after-remove', $PostRmFile
-            )
-        }
-
-        $FpmArgs += @(
+            '--rpm-changelog', $RpmPackagingChangelogFile
+             '--after-install', "$InputPackagePath/$($this.Product)/rpm/postinst"
+            '--before-remove', "$InputPackagePath/$($this.Product)/rpm/prerm"
+            '--after-remove', "$InputPackagePath/$($this.Product)/rpm/postrm"
             '--'
             "$Executable=/usr/bin/$PkgName"
-            "$ChangeLogFile=/usr/share/$PkgName/changelog"
-            "$CopyrightFile=/usr/share/$PkgName/copyright"
+            "$RpmUpstreamChangelogFile=/usr/share/doc/$PkgName/ChangeLog"
+            "$CopyrightFile=/usr/share/doc/$PkgName/copyright"
         )
 
         if ($this.Product -eq "gateway") {

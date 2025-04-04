@@ -23,8 +23,8 @@ use windows::Win32::System::LibraryLoader::{
 };
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::{
-    CreateProcessAsUserW, CreateRemoteThread, GetCurrentProcess, GetExitCodeProcess, GetProcessId, OpenProcess,
-    OpenProcessToken, QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT,
+    CreateProcessAsUserW, CreateRemoteThread, GetCurrentProcess, GetExitCodeProcess, OpenProcess, OpenProcessToken,
+    QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT,
     EXTENDED_STARTUPINFO_PRESENT, INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST, LPTHREAD_START_ROUTINE, PEB,
     PROCESS_ACCESS_RIGHTS, PROCESS_BASIC_INFORMATION, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, PROCESS_NAME_WIN32,
     PROCESS_TERMINATE, STARTUPINFOEXW, STARTUPINFOW, STARTUPINFOW_FLAGS,
@@ -33,7 +33,7 @@ use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLE
 use windows::Win32::UI::WindowsAndMessaging::SHOW_WINDOW_CMD;
 
 use crate::handle::{Handle, HandleWrapper};
-use crate::security::acl::{RawSecurityAttributes, SecurityAttributes};
+use crate::security::attributes::SecurityAttributes;
 use crate::security::privilege::{self, ScopedPrivileges};
 use crate::thread::Thread;
 use crate::token::Token;
@@ -55,8 +55,9 @@ impl From<Handle> for Process {
 
 impl Process {
     pub fn get_by_pid(pid: u32, desired_access: PROCESS_ACCESS_RIGHTS) -> Result<Self> {
-        // SAFETY: No preconditions.
+        // SAFETY: FFI call with no outstanding precondition.
         let handle = unsafe { OpenProcess(desired_access, false, pid) }?;
+
         // SAFETY: The handle is owned by us, we opened the process above.
         let handle = unsafe { Handle::new_owned(handle)? };
 
@@ -173,6 +174,7 @@ impl Process {
         // SAFETY: `GetCurrentProcess()` has no preconditions and always returns
         // a valid pseudo handle.
         let handle = unsafe { GetCurrentProcess() };
+
         // SAFETY: The handle returned by `GetCurrentProcess` is a pseudo handle.
         let handle = unsafe { Handle::new_pseudo_handle(handle) };
 
@@ -234,11 +236,6 @@ impl Process {
             process: self,
             address: basic_info.PebBaseAddress,
         })
-    }
-
-    pub fn pid(&self) -> u32 {
-        // SAFETY: Safe to call with a valid process handle.
-        unsafe { GetProcessId(self.handle.raw()) }
     }
 
     /// Reads process memory at a specified address into a buffer.
@@ -721,17 +718,14 @@ pub fn create_process_as_user(
 
     let mut raw_process_information = PROCESS_INFORMATION::default();
 
-    let process_attributes = process_attributes.map(RawSecurityAttributes::try_from).transpose()?;
-    let thread_attributes = thread_attributes.map(RawSecurityAttributes::try_from).transpose()?;
-
-    // SAFETY: No preconditions. All buffers are valid.
+    // SAFETY: FFI call with no outstanding precondition.
     unsafe {
         CreateProcessAsUserW(
             token.map(|x| x.handle().raw()).unwrap_or_default(),
             application_name.as_pcwstr(),
             command_line.as_pwstr(),
-            process_attributes.as_ref().map(|x| x.as_raw() as *const _),
-            thread_attributes.as_ref().map(|x| x.as_raw() as *const _),
+            process_attributes.map(|x| x.as_ptr()),
+            thread_attributes.map(|x| x.as_ptr()),
             inherit_handles,
             creation_flags,
             environment.as_mut_ptr(),

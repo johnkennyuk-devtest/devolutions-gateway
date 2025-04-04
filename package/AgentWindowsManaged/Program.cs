@@ -80,7 +80,7 @@ internal class Program
     private static string DevolutionsDesktopAgentPath
     {
         // ReSharper disable once ArrangeAccessorOwnerBody
-        get => ResolveDirectory("DAGENT_DESKTOP_AGENT_OUTPUT_PATH", "..\\..\\dotnet\\DesktopAgent\\bin\\Release\\");
+        get => ResolveDirectory("DAGENT_DESKTOP_AGENT_PATH", "..\\..\\dotnet\\DesktopAgent\\bin\\Release\\");
     }
 
     private static string DevolutionsPedmShellExtDll => ResolveArtifact("DAGENT_PEDM_SHELL_EXT_DLL", "..\\..\\target\\x86_64-pc-windows-msvc\\release\\devolutions_pedm_shell_ext.dll");
@@ -202,7 +202,7 @@ internal class Program
             project.CandleOptions = "-fips";
         }
 
-        project.DefaultFeature = Includes.AGENT_FEATURE;
+        project.DefaultFeature = Features.AGENT_FEATURE;
         project.Dirs = new Dir[]
         {
             new ("%ProgramFiles%", new Dir(Includes.VENDOR_NAME, new InstallDir(Includes.SHORT_NAME)
@@ -237,7 +237,7 @@ internal class Program
                         {
                             Type = SvcType.ownProcess,
                             // In contrast to Devolutions Gateway, Devolutions Agent uses LocalSystem
-                            // accout to be able to perform administrative operations
+                            // account to be able to perform administrative operations
                             // such as MSI installation (Updating, restarting DevolutionsGateway).
                             Interactive = false,
                             Vital = true,
@@ -253,13 +253,14 @@ internal class Program
                             StopOn = SvcEvent.InstallUninstall,
                         },
                     },
-                    new (Includes.PEDM_FEATURE, DevolutionsPedmShellExtDll),
-                    new (Includes.PEDM_FEATURE, DevolutionsPedmShellExtMsix),
-                    new (Includes.SESSION_FEATURE, DevolutionsSession)
+                    new (Features.SESSION_FEATURE, DevolutionsSession)
                 },
                 Dirs = new[]
                 {
-                    new Dir(Includes.PEDM_FEATURE, "desktop", new Files(Includes.PEDM_FEATURE, $"{DevolutionsDesktopAgentPath}\\*.*"))
+                    new Dir(Features.PEDM_FEATURE, "desktop", new Files(Features.PEDM_FEATURE, $"{DevolutionsDesktopAgentPath}\\*.*")),
+                    new Dir(Features.PEDM_FEATURE, "contextmenu", 
+                        new File(Features.PEDM_FEATURE, DevolutionsPedmShellExtDll), 
+                        new File(Features.PEDM_FEATURE, DevolutionsPedmShellExtMsix))
                 }
             })),
         };
@@ -276,14 +277,26 @@ internal class Program
                 Win64 = project.Platform == Platform.x64,
                 RegistryKeyAction = RegistryKeyAction.create,
             },
-            new (RegistryHive.LocalMachine, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", Includes.SERVICE_NAME, $"[{AgentProperties.InstallDir}]desktop\\DevolutionsDesktopAgent.exe")
+            new (RegistryHive.LocalMachine, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", Includes.SERVICE_NAME, $"[{AgentProperties.InstallDir}]desktop\\{Includes.DESKTOP_EXECUTABLE_NAME}")
             {
                 Win64 = project.Platform == Platform.x64,
                 RegistryKeyAction = RegistryKeyAction.create,
-                Feature = Includes.PEDM_FEATURE,
+                Feature = Features.PEDM_FEATURE,
             }
         };
-        project.Properties = AgentProperties.Properties.Select(x => x.ToWixSharpProperty()).ToArray();
+
+        List<Property> projectProperties = AgentProperties.Properties.Select(x => x.ToWixSharpProperty()).ToList();
+
+        // Disable the restart manager, based on the following assumptions:
+        // - DevolutionsAgent (service) is properly managed with ServiceControl, and won't trigger the restart manager
+        // - DevolutionsSession is managed by DevolutionsAgent (service) and will be properly closed on service stop
+        // - DevolutionsDesktopAgent will be closed by the installer before removing any files
+        // Since none of these executables have a main window, they will not trigger the old style "files in use" dialog
+        // TODO:
+        // - Make DevolutionsDesktopAgent answer WM_CLOSE
+        projectProperties.Add(new Property("MSIRESTARTMANAGERCONTROL", "Disable"));
+
+        project.Properties = projectProperties.ToArray();
         project.ManagedUI = new ManagedUI();
         project.ManagedUI.InstallDialogs.AddRange(Wizard.Dialogs);
         project.ManagedUI.InstallDialogs
@@ -407,6 +420,13 @@ internal class Program
             e.Result = ActionResult.UserExit;
         }
 
-        e.Session["ADDLOCAL"] = Helpers.AppSearch.InstalledFeatures.Select(x => x.FeatureName).JoinBy(",");
+        FeatureList features = new FeatureList(Helpers.AppSearch.InstalledFeatures);
+
+        if (installedVersion is null)
+        {
+            features.Add(Features.AGENT_UPDATER_FEATURE.Id);
+        }
+
+        e.Session["ADDLOCAL"] = features.ToString();
     }
 }

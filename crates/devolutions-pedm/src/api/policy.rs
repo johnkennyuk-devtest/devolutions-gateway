@@ -20,7 +20,7 @@ async fn get_profiles(Extension(named_pipe_info): Extension<NamedPipeConnectInfo
 
     let policy = policy::policy().read();
 
-    Ok(Json(policy.profiles().map(|p| p.id.clone()).collect()))
+    Ok(Json(policy.profiles().map(|p| p.id).collect()))
 }
 
 async fn post_profiles(
@@ -113,12 +113,12 @@ async fn get_me(
     Ok(Json(GetProfilesMeResponse {
         active: policy
             .user_current_profile(&named_pipe_info.user)
-            .map(|p| p.id.clone())
+            .map(|p| p.id)
             .unwrap_or_else(Uuid::nil),
         available: policy
             .user_profiles(&named_pipe_info.user)
             .into_iter()
-            .map(|p| p.id.clone())
+            .map(|p| p.id)
             .collect(),
     }))
 }

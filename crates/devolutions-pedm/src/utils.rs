@@ -6,15 +6,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use tracing::info;
+use win_api_wrappers::fs::create_directory;
 use win_api_wrappers::identity::account::Account;
 use win_api_wrappers::identity::sid::Sid;
-use win_api_wrappers::netmgmt::get_local_admin_group_members;
 use win_api_wrappers::process::{create_process_as_user, ProcessInformation, StartupInfo};
 use win_api_wrappers::raw::Win32::System::Threading::PROCESS_CREATION_FLAGS;
 use win_api_wrappers::token::Token;
-use win_api_wrappers::utils::{create_directory, CommandLine};
+use win_api_wrappers::utils::CommandLine;
 
 // WinAPI's functions have many arguments, we wrap the same way.
+// TODO: maybe consider https://bon-rs.com/, for named function arguments-like ergonomics.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn start_process(
     token: &Token,
@@ -27,12 +28,12 @@ pub(crate) fn start_process(
     startup_info: &mut StartupInfo,
 ) -> anyhow::Result<ProcessInformation> {
     let token = token.duplicate_impersonation()?;
-    let account = token.sid_and_attributes()?.sid.account(None)?;
+    let account = token.sid_and_attributes()?.sid.lookup_account(None)?;
 
     info!(
         ?executable_path,
         ?command_line,
-        account.account_name,
+        account.name = account.name.to_string_lossy(),
         "Starting process"
     );
 
@@ -52,29 +53,6 @@ pub(crate) fn start_process(
     )
 }
 
-fn is_member_of_administrators_group_directly(user_sid: &Sid) -> anyhow::Result<bool> {
-    Ok(get_local_admin_group_members()?.contains(user_sid))
-}
-
-fn is_member_of_administrators(user_token: &Token) -> anyhow::Result<bool> {
-    if is_member_of_administrators_group_directly(&user_token.sid_and_attributes()?.sid)? {
-        return Ok(true);
-    }
-
-    let local_admin_sids = get_local_admin_group_members()?;
-    let group_sids_and_attributes = user_token.groups()?.0;
-
-    for user_group_sid_and_attributes in group_sids_and_attributes {
-        for admin_sid in &local_admin_sids {
-            if admin_sid == &user_group_sid_and_attributes.sid {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
-}
-
 #[derive(Default)]
 pub(crate) struct MultiHasher {
     sha1: Sha1,
@@ -82,6 +60,7 @@ pub(crate) struct MultiHasher {
 }
 
 impl MultiHasher {
+    #[must_use]
     pub(crate) fn chain_update(mut self, data: &[u8]) -> Self {
         self.update(data);
         self
@@ -115,6 +94,7 @@ pub(crate) fn file_hash(path: &Path) -> anyhow::Result<Hash> {
 
 pub(crate) fn ensure_protected_directory(dir: &Path, _readers: Vec<Sid>) -> anyhow::Result<()> {
     // FIXME: Underlying behaviour of security primitives must be corrected before this can work
+
     // let owner = Sid::from_well_known(WinLocalSystemSid, None)?;
 
     // let mut aces = vec![Ace {
@@ -144,36 +124,36 @@ pub(crate) fn ensure_protected_directory(dir: &Path, _readers: Vec<Sid>) -> anyh
     //         None,
     //     )?;
     // } else {
-    //     create_directory_with_security_attributes(
+    //     create_directory(
     //         dir,
-    //         &SecurityAttributes {
+    //         Some(&SecurityAttributes {
     //             security_descriptor: Some(SecurityDescriptor {
     //                 owner: Some(owner),
     //                 dacl: Some(dacl),
     //                 ..Default::default()
     //             }),
     //             inherit_handle: false,
-    //         },
+    //         }),
     //     )?;
     // }
 
     if !dir.exists() {
-        create_directory(dir)?;
+        create_directory(dir, None)?;
     }
 
     Ok(())
 }
 
 pub(crate) trait AccountExt {
-    fn to_user(self) -> User;
+    fn to_user(&self) -> User;
 }
 
 impl AccountExt for Account {
-    fn to_user(self) -> User {
+    fn to_user(&self) -> User {
         User {
-            account_name: self.account_name,
-            domain_name: self.domain_name,
-            account_sid: self.account_sid.to_string(),
+            account_name: self.name.to_string_lossy(),
+            domain_name: self.domain_name.to_string_lossy(),
+            account_sid: self.sid.to_string(),
             domain_sid: self.domain_sid.to_string(),
         }
     }

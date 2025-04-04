@@ -1,50 +1,66 @@
 use anyhow::bail;
 use windows::Win32::Foundation::WIN32_ERROR;
-
-use crate::identity::sid::{RawSid, Sid};
-use crate::raw::Win32::NetworkManagement::NetManagement::{
-    NERR_Success, NetApiBufferFree, NetLocalGroupAddMembers, NetLocalGroupDelMembers, NetLocalGroupGetMembers,
-    LOCALGROUP_MEMBERS_INFO_0, MAX_PREFERRED_LENGTH,
+use windows::Win32::NetworkManagement::NetManagement;
+use windows::Win32::NetworkManagement::NetManagement::{
+    NetLocalGroupGetMembers, LOCALGROUP_MEMBERS_INFO_0, MAX_PREFERRED_LENGTH,
 };
-use crate::raw::Win32::Security::WinBuiltinAdministratorsSid;
-use crate::utils::WideString;
+use windows::Win32::Security::WinBuiltinAdministratorsSid;
+
+use crate::identity::sid::Sid;
+use crate::str::{U16CStr, U16CStrExt as _};
 use crate::Error;
 
-pub fn add_local_group_member(group_name: &str, security_identifier: &Sid) -> anyhow::Result<()> {
-    // SAFETY: The structure is a simple POD type.
-    let mut group_info = unsafe { core::mem::zeroed::<LOCALGROUP_MEMBERS_INFO_0>() };
+pub fn add_local_group_member(group_name: &U16CStr, security_identifier: &Sid) -> windows::core::Result<()> {
+    let group_info = LOCALGROUP_MEMBERS_INFO_0 {
+        lgrmi0_sid: security_identifier.as_psid_const(),
+    };
 
-    let group_name = WideString::from(group_name);
+    // SAFETY:
+    // - level is set to 0, and the buf parameter points to an array of LOCALGROUP_MEMBERS_INFO_0 structs.
+    // - lgrmi0_sid is never modified by NetLocalGroupAddMembers.
+    // - buf points to a single struct, so totalentries is set to 1.
+    let ret = unsafe {
+        NetManagement::NetLocalGroupAddMembers(
+            None,
+            group_name.as_pcwstr(),
+            0,
+            &group_info as *const LOCALGROUP_MEMBERS_INFO_0 as *const u8,
+            1,
+        )
+    };
 
-    let user_sid = RawSid::try_from(security_identifier)?;
-    group_info.lgrmi0_sid = user_sid.as_psid();
-
-    // SAFETY: group_name holds a null-terminated UTF-16 string, and as_pcwstr() returns a valid pointer to it.
-    let rc =
-        unsafe { NetLocalGroupAddMembers(None, group_name.as_pcwstr(), 0, &group_info as *const _ as *const u8, 1) };
-
-    if rc != NERR_Success {
-        bail!(Error::from_win32(WIN32_ERROR(rc)))
+    if ret != NetManagement::NERR_Success {
+        return Err(windows::core::Error::from_hresult(windows::core::HRESULT::from_win32(
+            ret,
+        )));
     }
 
     Ok(())
 }
 
-pub fn remove_local_group_member(group_name: &str, security_identifier: &Sid) -> anyhow::Result<()> {
-    // SAFETY: The structure is a simple POD type.
-    let mut group_info = unsafe { core::mem::zeroed::<LOCALGROUP_MEMBERS_INFO_0>() };
+pub fn remove_local_group_member(group_name: &U16CStr, security_identifier: &Sid) -> windows::core::Result<()> {
+    let group_info = LOCALGROUP_MEMBERS_INFO_0 {
+        lgrmi0_sid: security_identifier.as_psid_const(),
+    };
 
-    let group_name = WideString::from(group_name);
+    // SAFETY:
+    // - level is set to 0, and the buf parameter points to an array of LOCALGROUP_MEMBERS_INFO_0 structs.
+    // - lgrmi0_sid is never modified by NetLocalGroupDelMembers.
+    // - buf points to a single struct, so totalentries is set to 1.
+    let ret = unsafe {
+        NetManagement::NetLocalGroupDelMembers(
+            None,
+            group_name.as_pcwstr(),
+            0,
+            &group_info as *const LOCALGROUP_MEMBERS_INFO_0 as *const u8,
+            1,
+        )
+    };
 
-    let user_sid = RawSid::try_from(security_identifier)?;
-    group_info.lgrmi0_sid = user_sid.as_psid();
-
-    // SAFETY: group name holds a null-terminated UTF-16 string, and as_pcwstr() returns a valid pointer to it.
-    let rc =
-        unsafe { NetLocalGroupDelMembers(None, group_name.as_pcwstr(), 0, &group_info as *const _ as *const u8, 1) };
-
-    if rc != NERR_Success {
-        bail!(Error::from_win32(WIN32_ERROR(rc)))
+    if ret != NetManagement::NERR_Success {
+        return Err(windows::core::Error::from_hresult(windows::core::HRESULT::from_win32(
+            ret,
+        )));
     }
 
     Ok(())
@@ -52,12 +68,11 @@ pub fn remove_local_group_member(group_name: &str, security_identifier: &Sid) ->
 
 pub fn get_local_admin_group_members() -> anyhow::Result<Vec<Sid>> {
     let local_admin_group_sid = Sid::from_well_known(WinBuiltinAdministratorsSid, None)?;
-    let local_admin_group_account = local_admin_group_sid.account(None)?;
-    get_local_group_members(local_admin_group_account.account_name)
+    let local_admin_group_account = local_admin_group_sid.lookup_account(None)?;
+    get_local_group_members(&local_admin_group_account.name)
 }
 
-pub fn get_local_group_members(group_name: String) -> anyhow::Result<Vec<Sid>> {
-    let group_name = WideString::from(group_name);
+pub fn get_local_group_members(group_name: &U16CStr) -> anyhow::Result<Vec<Sid>> {
     let mut group_members: *mut u8 = std::ptr::null_mut();
     let mut number_of_entries_read = 0;
     let mut total_entries = 0;
@@ -78,7 +93,7 @@ pub fn get_local_group_members(group_name: String) -> anyhow::Result<Vec<Sid>> {
         )
     };
 
-    if ret != NERR_Success {
+    if ret != NetManagement::NERR_Success {
         bail!(Error::from_win32(WIN32_ERROR(ret)))
     }
 
@@ -97,7 +112,10 @@ pub fn get_local_group_members(group_name: String) -> anyhow::Result<Vec<Sid>> {
 
     let group_members = group_members
         .iter()
-        .map(|member| Sid::try_from(member.lgrmi0_sid))
+        .map(|member| {
+            // SAFETY: Value returned by Win32 API (NetLocalGroupGetMembers).
+            unsafe { Sid::from_psid(member.lgrmi0_sid) }
+        })
         .collect::<Result<Vec<Sid>, _>>()?;
 
     Ok(group_members)
@@ -111,7 +129,7 @@ impl crate::memory::FreeMemory for NetmgmtFreeMemory {
     /// `ptr` is a pointer which must be freed by `NetApiBufferFree`
     unsafe fn free(ptr: *mut core::ffi::c_void) {
         // SAFETY: Per invariant on `ptr`, NetApiBufferFree must be called on it for releasing the memory.
-        unsafe { NetApiBufferFree(Some(ptr)) };
+        unsafe { NetManagement::NetApiBufferFree(Some(ptr)) };
     }
 }
 

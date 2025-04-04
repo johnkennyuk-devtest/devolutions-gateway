@@ -1,6 +1,6 @@
 [package]
 name = "devolutions-agent"
-version = "2024.3.6"
+version = "2025.1.4"
 edition = "2021"
 license = "MIT/Apache-2.0"
 authors = ["Devolutions Inc. <infos@devolutions.net>"]
@@ -40,7 +40,7 @@ features = [
 ]
 
 [dependencies.tokio]
-version = "1.42"
+version = "1.44"
 features = [
     "signal",
     "net",
@@ -57,6 +57,7 @@ features = [
 hex = "0.4"
 notify-debouncer-mini = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+aws-lc-rs = "^1.11.1"
 sha2 = "0.10"
 thiserror = "1"
 uuid = { version = "1.10", features = ["v4"] }

@@ -1,6 +1,6 @@
 [package]
 name = "devolutions-pedm-shell-ext"
-version = "2024.3.6"
+version = "2025.1.4"
 edition = "2021"
 license = "MIT/Apache-2.0"
 authors = ["Devolutions Inc. <infos@devolutions.net>"]
@@ -11,7 +11,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-tokio = { version = "1.42", features = ["sync"] }
+tokio = { version = "1.44", features = ["sync"] }
 windows-core = "0.58" # necessary because of macro resolving `windows::core`. Must match `win-api-wrappers` version.
 devolutions-pedm-shared = { path = "../devolutions-pedm-shared", features = ["pedm_client", "desktop"] }
 win-api-wrappers = { path = "../win-api-wrappers" }

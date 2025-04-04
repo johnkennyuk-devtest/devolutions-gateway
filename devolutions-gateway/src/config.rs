@@ -1,22 +1,24 @@
-use crate::listener::ListenerUrls;
-use crate::target_addr::TargetAddr;
-use crate::token::Subkey;
-use anyhow::Context;
-use camino::{Utf8Path, Utf8PathBuf};
-use cfg_if::cfg_if;
-use core::fmt;
-use picky::key::{PrivateKey, PublicKey};
-use picky::pem::Pem;
 use std::collections::HashMap;
-use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
+use std::{env, fmt};
+
+use anyhow::Context;
+use camino::{Utf8Path, Utf8PathBuf};
+use cfg_if::cfg_if;
+use picky::key::{PrivateKey, PublicKey};
+use picky::pem::Pem;
 use tap::prelude::*;
 use tokio::sync::Notify;
 use tokio_rustls::rustls::pki_types;
 use url::Url;
 use uuid::Uuid;
+
+use crate::credendials::Password;
+use crate::listener::ListenerUrls;
+use crate::target_addr::TargetAddr;
+use crate::token::Subkey;
 
 const CERTIFICATE_LABELS: &[&str] = &["CERTIFICATE", "X509 CERTIFICATE", "TRUSTED CERTIFICATE"];
 const PRIVATE_KEY_LABELS: &[&str] = &["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY"];
@@ -107,7 +109,7 @@ pub enum WebAppAuth {
 pub struct WebAppUser {
     pub name: String,
     /// Hash of the password, in the PHC string format
-    pub password_hash: dto::Password,
+    pub password_hash: Password,
 }
 
 impl Conf {
@@ -572,7 +574,7 @@ fn default_hostname() -> Option<String> {
 
 fn read_pfx_file(
     path: &Utf8Path,
-    password: Option<&dto::Password>,
+    password: Option<&Password>,
 ) -> anyhow::Result<(
     Vec<pki_types::CertificateDer<'static>>,
     pki_types::PrivateKeyDer<'static>,
@@ -905,8 +907,6 @@ fn to_listener_urls(conf: &dto::ListenerConf, hostname: &str, auto_ipv6: bool) -
 pub mod dto {
     use std::collections::HashMap;
 
-    use serde::{de, ser};
-
     use super::*;
 
     /// Source of truth for Gateway configuration
@@ -1129,8 +1129,16 @@ pub mod dto {
         /// Providing this option will cause the PCAP interceptor to be attached to each stream.
         pub capture_path: Option<Utf8PathBuf>,
 
-        /// Path to the XMF shared library (Cadeau) for runtime loading.
+        /// Path to the XMF shared library (Cadeau) for runtime loading
         pub lib_xmf_path: Option<Utf8PathBuf>,
+
+        /// WebSocket keep-alive interval in seconds
+        ///
+        /// The interval in seconds before a Ping message is sent to the other end.
+        ///
+        /// Default value is 45.
+        #[serde(default = "ws_keep_alive_interval_default_value")]
+        pub ws_keep_alive_interval: u64,
 
         /// Enable unstable features which may break at any point
         #[serde(default)]
@@ -1149,6 +1157,7 @@ pub mod dto {
                 capture_path: None,
                 lib_xmf_path: None,
                 enable_unstable: false,
+                ws_keep_alive_interval: ws_keep_alive_interval_default_value(),
             }
         }
     }
@@ -1157,6 +1166,10 @@ pub mod dto {
         pub fn is_default(&self) -> bool {
             Self::default().eq(self)
         }
+    }
+
+    const fn ws_keep_alive_interval_default_value() -> u64 {
+        45
     }
 
     #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
@@ -1366,78 +1379,6 @@ pub mod dto {
         CurrentUser,
         CurrentService,
         LocalMachine,
-    }
-
-    #[derive(PartialEq, Eq, Clone, zeroize::Zeroize)]
-    pub struct Password(String);
-
-    impl Password {
-        /// Do not copy the return value without wrapping into some "Zeroize"able structure.
-        pub fn get(&self) -> &str {
-            &self.0
-        }
-    }
-
-    impl From<&str> for Password {
-        fn from(value: &str) -> Self {
-            Self(value.to_owned())
-        }
-    }
-
-    impl From<String> for Password {
-        fn from(value: String) -> Self {
-            Self(value)
-        }
-    }
-
-    impl fmt::Debug for Password {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("Password").finish_non_exhaustive()
-        }
-    }
-
-    impl<'de> de::Deserialize<'de> for Password {
-        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            struct V;
-
-            impl de::Visitor<'_> for V {
-                type Value = Password;
-
-                fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    formatter.write_str("a string")
-                }
-
-                fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
-                where
-                    E: de::Error,
-                {
-                    Ok(Password(v))
-                }
-
-                fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-                where
-                    E: de::Error,
-                {
-                    Ok(Password(v.to_owned()))
-                }
-            }
-
-            let password = deserializer.deserialize_string(V)?;
-
-            Ok(password)
-        }
-    }
-
-    impl ser::Serialize for Password {
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
-        {
-            serializer.serialize_str(&self.0)
-        }
     }
 
     #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]

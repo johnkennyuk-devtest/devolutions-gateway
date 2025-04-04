@@ -21,6 +21,7 @@
                     <!-- properties -->
                 <String Id="Property_Directory">Répertoire</String>
                     <!-- static -->
+                <String Id="ExperimentalLabel">Expérimental</String>
                 <String Id="UACPromptLabel">Veuillez attendre que l'invite UAC apparaisse.
 
 Si elle apparaît en mode réduit, alors vous devez l'activer à partir de la barre de tâches.</String>
@@ -59,6 +60,8 @@ Si elle apparaît en mode réduit, alors vous devez l'activer à partir de la ba
                     <!-- metadata.- -->
                 <String Id="FeatureAgentDescription">Install the Devolutions Agent service</String>
                 <String Id="FeatureAgentName">Devolutions Agent</String>
+                <String Id="FeatureAgentUpdaterDescription">Enable the Devolutions Gateway updater</String>
+                <String Id="FeatureAgentUpdaterName">Devolutions Gateway Updater</String>
                 <String Id="FeaturePedmDescription">Enable PEDM features and install the shell extension</String>
                 <String Id="FeaturePedmName">Devolutions PEDM</String>
                 <String Id="FeatureSessionDescription">Install the Devolutions Session application</String>

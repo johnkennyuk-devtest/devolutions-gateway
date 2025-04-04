@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -7,9 +8,8 @@ use futures_sink::Sink;
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub enum WsMessage {
+pub enum WsReadMsg {
     Payload(Vec<u8>),
-    Ignored,
     Close,
 }
 
@@ -41,7 +41,7 @@ impl<S> WsStream<S> {
 
 impl<S, E> AsyncRead for WsStream<S>
 where
-    S: Stream<Item = Result<WsMessage, E>>,
+    S: Stream<Item = Result<WsReadMsg, E>>,
     E: std::error::Error + Send + Sync + 'static,
 {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut tokio::io::ReadBuf<'_>) -> Poll<io::Result<()>> {
@@ -50,18 +50,13 @@ where
         let mut data = if let Some(data) = this.read_buf.take() {
             data
         } else {
-            loop {
-                match ready!(this.inner.as_mut().poll_next(cx)) {
-                    Some(Ok(m)) => match m {
-                        WsMessage::Payload(data) => {
-                            break data;
-                        }
-                        WsMessage::Ignored => {}
-                        WsMessage::Close => return Poll::Ready(Ok(())),
-                    },
-                    Some(Err(e)) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
-                    None => return Poll::Ready(Ok(())),
-                }
+            match ready!(this.inner.as_mut().poll_next(cx)) {
+                Some(Ok(m)) => match m {
+                    WsReadMsg::Payload(data) => data,
+                    WsReadMsg::Close => return Poll::Ready(Ok(())),
+                },
+                Some(Err(e)) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
+                None => return Poll::Ready(Ok(())),
             }
         };
 
@@ -127,5 +122,104 @@ fn to_io_result<E: std::error::Error + Send + Sync + 'static>(res: Result<(), E>
     match res {
         Ok(()) => Ok(()),
         Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
+    }
+}
+
+pub struct WsCloseFrame {
+    pub code: u16,
+    pub message: String,
+}
+
+pub enum WsWriteMsg {
+    Ping,
+    Close(WsCloseFrame),
+}
+
+pub trait KeepAliveShutdown: Send + 'static {
+    fn wait(&mut self) -> impl core::future::Future<Output = ()> + Send + '_;
+}
+
+impl KeepAliveShutdown for std::sync::Arc<tokio::sync::Notify> {
+    fn wait(&mut self) -> impl core::future::Future<Output = ()> + Send + '_ {
+        self.notified()
+    }
+}
+
+pub struct CloseWebSocketHandle {
+    sender: tokio::sync::mpsc::Sender<WsCloseFrame>,
+}
+
+// Note: Never sends 1005 and 1006 manually, as specified in RFC6455, section 7.4.1
+impl CloseWebSocketHandle {
+    pub async fn normal_close(self) {
+        let _ = self
+            .sender
+            .send(WsCloseFrame {
+                code: 1000,
+                message: String::new(),
+            })
+            .await;
+    }
+
+    pub async fn server_error(self, message: String) {
+        let _ = self.sender.send(WsCloseFrame { code: 1011, message }).await;
+    }
+
+    pub async fn bad_gateway(self) {
+        let _ = self
+            .sender
+            .send(WsCloseFrame {
+                code: 1014,
+                message: String::new(),
+            })
+            .await;
+    }
+}
+
+/// A background "sentinel" task responsible for keeping the WebSocket connection alive
+/// and handling close requests.
+///
+/// - Periodically sends Ping frames to ensure the connection remains active.
+/// - Listens for close requests, forwarding any received close frames to cleanly terminate
+///   the WebSocket communication.
+/// - Terminates when either the close signal is processed or if sending the Ping frame fails.
+pub fn spawn_websocket_sentinel_task<S>(
+    mut ws: S,
+    mut shutdown_signal: impl KeepAliveShutdown,
+    keep_alive_interval: core::time::Duration,
+) -> CloseWebSocketHandle
+where
+    S: Sink<WsWriteMsg> + Unpin + Send + 'static,
+{
+    use futures_util::SinkExt as _;
+    use tracing::Instrument as _;
+
+    let span = tracing::Span::current();
+    let (close_frame_sender, mut close_frame_receiver) = tokio::sync::mpsc::channel(1);
+
+    tokio::spawn(
+        async move {
+            loop {
+                tokio::select! {
+                    () = tokio::time::sleep(keep_alive_interval) => {
+                        if ws.send(WsWriteMsg::Ping).await.is_err() {
+                            break;
+                        }
+                    }
+                    frame = close_frame_receiver.recv() => {
+                        if let Some(frame) = frame {
+                            let _ = ws.send(WsWriteMsg::Close(frame)).await;
+                        }
+                        break;
+                    }
+                    () = shutdown_signal.wait() => break,
+                }
+            }
+        }
+        .instrument(span),
+    );
+
+    CloseWebSocketHandle {
+        sender: close_frame_sender,
     }
 }
