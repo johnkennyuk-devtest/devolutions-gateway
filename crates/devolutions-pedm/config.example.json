@@ -1,0 +1,12 @@
+{
+    "Db": "Libsql",
+    "Libsql": {
+        "Path": "C:/ProgramData/Devolutions/Agent/pedm/pedm.sqlite"
+    },
+    "Postgres": {
+        "Host": "192.168.0.100",
+        "Dbname": "pedm",
+        "User": "pedm",
+        "Password": "pedm"
+    }
+}
