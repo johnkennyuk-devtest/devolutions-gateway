@@ -126,6 +126,7 @@ export class WebClientRdpComponent extends WebClientBaseComponent implements OnI
 
   ngAfterViewInit(): void {
     this.initiateRemoteClientListener();
+    this.fetchAndUsePresetRdpEntries();
   }
 
   ngOnDestroy(): void {
@@ -456,5 +457,10 @@ export class WebClientRdpComponent extends WebClientBaseComponent implements OnI
 
   protected getProtocol(): ProtocolString {
     return 'RDP';
+  }
+
+  private fetchAndUsePresetRdpEntries(): void {
+    // Fetch preset RDP entries based on authenticated user and use them
+    // This is a placeholder function. Implement the actual logic to fetch and use preset RDP entries.
   }
 }

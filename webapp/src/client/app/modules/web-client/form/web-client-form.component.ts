@@ -67,6 +67,7 @@ export class WebClientFormComponent extends BaseSessionComponent implements OnIn
   ngOnInit(): void {
     this.initializeFormAndOptions();
     this.subscribeToNetscanFillEvent();
+    this.fetchAndDisplayRdpEntries();
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -165,6 +166,8 @@ export class WebClientFormComponent extends BaseSessionComponent implements OnIn
       protocol: [inputFormData?.protocol || 0, Validators.required],
       autoComplete: [inputFormData?.autoComplete || '', Validators.required],
       hostname: [inputFormData?.autoComplete || ''],
+      ip: [inputFormData?.ip || '', Validators.required],
+      credentials: [inputFormData?.credentials || '', Validators.required],
     };
 
     const formGroup = this.fb.group(formControls);
@@ -290,5 +293,10 @@ export class WebClientFormComponent extends BaseSessionComponent implements OnIn
         protocol.setValue(entry.protocol);
       }
     });
+  }
+
+  private fetchAndDisplayRdpEntries(): void {
+    // Fetch RDP entries based on authenticated user and display them
+    // This is a placeholder function. Implement the actual logic to fetch and display RDP entries.
   }
 }

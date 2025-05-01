@@ -88,6 +88,7 @@ pub struct Conf {
     pub verbosity_profile: dto::VerbosityProfile,
     pub web_app: WebAppConf,
     pub debug: dto::DebugConf,
+    pub rdp_entries: HashMap<String, RdpEntry>,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -110,6 +111,13 @@ pub struct WebAppUser {
     pub name: String,
     /// Hash of the password, in the PHC string format
     pub password_hash: Password,
+}
+
+#[derive(Debug, Clone)]
+pub struct RdpEntry {
+    pub username: String,
+    pub password: Password,
+    pub rdp_file: Utf8PathBuf,
 }
 
 impl Conf {
@@ -280,6 +288,21 @@ impl Conf {
             }
         }
 
+        let rdp_entries = conf_file
+            .rdp_entries
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(user, entry)| {
+                let rdp_entry = RdpEntry {
+                    username: entry.username,
+                    password: entry.password.into(),
+                    rdp_file: entry.rdp_file,
+                };
+                (user, rdp_entry)
+            })
+            .collect();
+
         Ok(Conf {
             id: conf_file.id,
             hostname,
@@ -305,6 +328,7 @@ impl Conf {
                 .unwrap_or_else(WebAppConf::from_env)
                 .context("webapp config")?,
             debug: conf_file.debug.clone().unwrap_or_default(),
+            rdp_entries,
         })
     }
 
@@ -412,7 +436,7 @@ impl WebAppConf {
             exe_path.pop();
             exe_path.push("webapp");
             Ok(exe_path)
-        } else if cfg!(target_os = "linux") {
+        } else if cfg!(target_os == "linux") {
             let mut root_path = std::path::PathBuf::from("/usr/share");
             root_path.push(APPLICATION_DIR);
             root_path.push("webapp");
@@ -1016,6 +1040,10 @@ pub mod dto {
         #[serde(rename = "__debug__", skip_serializing_if = "Option::is_none")]
         pub debug: Option<DebugConf>,
 
+        /// Custom RDP entries for different users
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub rdp_entries: Option<HashMap<String, RdpEntryConf>>,
+
         // Other unofficial options.
         // This field is useful so that we can deserialize
         // and then losslessly serialize back all root keys of the config file.
@@ -1063,6 +1091,7 @@ pub mod dto {
                 sogar: None,
                 job_queue_database: None,
                 debug: None,
+                rdp_entries: None,
                 rest: serde_json::Map::new(),
             }
         }
@@ -1401,5 +1430,13 @@ pub mod dto {
     pub enum WebAppAuth {
         Custom,
         None,
+    }
+
+    #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct RdpEntryConf {
+        pub username: String,
+        pub password: String,
+        pub rdp_file: Utf8PathBuf,
     }
 }

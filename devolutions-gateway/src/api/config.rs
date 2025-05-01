@@ -1,4 +1,4 @@
-use crate::config::dto::{DataEncoding, PubKeyFormat, Subscriber};
+use crate::config::dto::{DataEncoding, PubKeyFormat, Subscriber, RdpEntryConf};
 use crate::extract::ConfigWriteScope;
 use crate::http::HttpError;
 use crate::DgwState;
@@ -7,6 +7,7 @@ use axum::routing::patch;
 use axum::{Json, Router};
 use tap::prelude::*;
 use uuid::Uuid;
+use std::collections::HashMap;
 
 pub fn make_router<S>(state: DgwState) -> Router<S> {
     Router::new().route("/", patch(patch_config)).with_state(state)
@@ -25,6 +26,9 @@ pub(crate) struct ConfigPatch {
     /// Subscriber configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     subscriber: Option<Subscriber>,
+    /// Custom RDP entries for different users
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rdp_entries: Option<HashMap<String, RdpEntryConf>>,
 }
 
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -41,7 +45,7 @@ pub(crate) struct SubProvisionerKey {
     encoding: Option<DataEncoding>,
 }
 
-const KEY_ALLOWLIST: &[&str] = &["Id", "SubProvisionerPublicKey", "Subscriber"];
+const KEY_ALLOWLIST: &[&str] = &["Id", "SubProvisionerPublicKey", "Subscriber", "RdpEntries"];
 
 /// Modifies configuration
 #[cfg_attr(feature = "openapi", utoipa::path(
